@@ -5,11 +5,6 @@ import (
 	"time"
 )
 
-const (
-	maxMessageHandlers = 10
-	defaultBufferLen   = 1500
-)
-
 type Client struct {
 	nextPacketID    uint
 	cmdTimeout      time.Duration
@@ -80,10 +75,3 @@ func b2u8(b bool) uint8 {
 	}
 	return 0
 }
-
-const (
-	QoS0 uint8 = iota
-	QoS1
-	QoS2
-	QoSSubfail uint8 = 0x80
-)

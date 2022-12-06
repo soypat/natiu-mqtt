@@ -97,7 +97,7 @@ type controlPacket struct {
 // decodeRemainingLength expects
 func decodeRemainingLength(b []byte) (value uint32, err error) {
 	multiplier := uint32(1)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < maxRemainingLengthSize; i++ {
 		encodedByte := b[i]
 		value += uint32(encodedByte&127) * multiplier
 		if encodedByte&128 != 0 {
@@ -109,7 +109,10 @@ func decodeRemainingLength(b []byte) (value uint32, err error) {
 }
 
 func encodeRemainingLength(remlen uint32, b []byte) (n int) {
-	for n = 0; remlen > 0 && n < 4; n++ {
+	if remlen > maxRemainingLengthSize {
+		panic("remaining length too large")
+	}
+	for n = 0; remlen > 0 && n < maxRemainingLengthSize; n++ {
 		encoded := byte(remlen % 128)
 		remlen /= 128
 		if remlen > 0 {
