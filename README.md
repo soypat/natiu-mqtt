@@ -11,7 +11,7 @@ top level. This implementation will be transport agnostic and non-concurrent. Th
 
 
 Some issues with Eclipse's Paho implementation:
-* [Inherent data races on API side](git@github.com:eclipse/paho.mqtt.embedded-c.git). The implementation is so notoriously hard to modify this issue has been in a frozen state.
+* [Inherent data races on API side](https://github.com/eclipse/paho.mqtt.golang/issues/550). The implementation is so notoriously hard to modify this issue has been in a frozen state.
 * Calling Client.Disconnect when client is already disconnected blocks indefinetely and can cause deadlock or spin with Paho's implementation. 
 * If there is an issue with the network and Reconnect is enabled then then Paho's Reconnect spins. There is no way to prevent this.
 * Interfaces used for ALL data types. This is not necessary and makes it difficult to work with since there is no in-IDE documentation on interface methods.
