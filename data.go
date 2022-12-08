@@ -1,7 +1,7 @@
 package mqtt
 
 type Message struct {
-	QoS        uint8
+	QoS        QoSLevel
 	Retained   byte
 	Duplicated byte
 	ID         uint16

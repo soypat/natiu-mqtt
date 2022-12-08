@@ -1,4 +1,5 @@
 # arandu-mqtt
+### A low-level, correct MQTT implementation.
 A better-than-paho MQTT client implementation, WIP.
 
 Using [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)

@@ -47,7 +47,7 @@ func (c *Client) connectFlags(username, password string, willRetain, willFlag bo
 
 func (c *Client) writeConnect(w io.Writer, payload []byte) error {
 	var packet [11]byte
-	packet[0] = ptConnect.marshal(0) // flags=0
+	packet[0] = PacketConnect.marshal(0) // flags=0
 	// remaining length
 	rl := uint32(10 + len(payload))
 	// n contains ptr to data.
@@ -67,6 +67,8 @@ func (c *Client) writeConnect(w io.Writer, payload []byte) error {
 	}
 	return nil
 }
+
+type internalReadByter func() (byte, error)
 
 // bool to uint8
 func b2u8(b bool) uint8 {
@@ -110,6 +112,7 @@ func (trp *transport) readnb(b []byte) error {
 
 // decodes message length according to MQTT spec.
 func (trp *transport) decodenb() (int, error) {
-	var c byte
+	// var c byte
 
+	return 99, nil
 }
