@@ -38,13 +38,6 @@ func NewClient(configuration ...ClientOption) (Client, error) {
 	}, nil
 }
 
-func (c *Client) connectFlags(username, password string, willRetain, willFlag bool, willQoS uint8) byte {
-	hasUsername := username != ""
-	return b2u8(hasUsername)<<7 | b2u8(hasUsername && password != "")<<6 | // See  [MQTT-3.1.2-22].
-		b2u8(willRetain)<<5 | willQoS<<3 |
-		b2u8(willFlag)<<2 | b2u8(c.cleanSession)<<1
-}
-
 func (c *Client) writeConnect(w io.Writer, payload []byte) error {
 	var packet [11]byte
 	packet[0] = PacketConnect.marshal(0) // flags=0

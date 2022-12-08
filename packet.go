@@ -24,6 +24,19 @@ type PacketFlags uint8
 func (pf PacketFlags) QoS() QoSLevel   { return QoSLevel((pf >> 1) & 0b11) }
 func (pf PacketFlags) Retain() bool    { return pf&1 != 0 }
 func (pf PacketFlags) Duplicate() bool { return pf&(1<<3) != 0 }
+func (pf PacketFlags) String() string {
+	if pf > 15 {
+		return "invalid packet flags"
+	}
+	s := pf.QoS().String()
+	if pf.Duplicate() {
+		s += "/DUP"
+	}
+	if pf.Retain() {
+		s += "/RET"
+	}
+	return s
+}
 
 func NewPublishFlags(qos QoSLevel, dup, retain bool) (PacketFlags, error) {
 	if qos > QoS2 {
@@ -49,15 +62,19 @@ func NewHeader(packetType PacketType, packetFlags PacketFlags, identifier uint16
 	if packetType > 15 {
 		return Header{}, errors.New("packet type exceeds 4 bit range 0..15")
 	}
-	h := Header{
-		firstByte:        byte(packetType)<<4 | byte(packetFlags),
-		RemainingLength:  remainingLen,
-		PacketIdentifier: identifier,
-	}
+	h := newHeader(packetType, packetFlags, identifier, remainingLen)
 	if err := h.Validate(); err != nil {
 		return Header{}, err
 	}
 	return h, nil
+}
+
+func newHeader(pt PacketType, pf PacketFlags, identifier uint16, rlen uint32) Header {
+	return Header{ // Creates a header with no error checking. For internal use.
+		firstByte:        byte(pt)<<4 | byte(pf),
+		RemainingLength:  rlen,
+		PacketIdentifier: identifier,
+	}
 }
 
 func (h Header) Validate() error {
@@ -86,7 +103,9 @@ func (h Header) Validate() error {
 
 func (h Header) Flags() PacketFlags { return PacketFlags(h.firstByte & 0b1111) }
 func (h Header) Type() PacketType   { return PacketType(h.firstByte >> 4) }
-func (h Header) String()
+func (h Header) String() string {
+	return h.Type().String() + " " + h.Flags().String()
+}
 
 // DecodeHeader receives transp, an io.ByteReader that reads from an underlying arbitrary
 // transport protocol. transp should start returning the first byte of the MQTT packet.
@@ -122,8 +141,7 @@ func DecodeHeader(transp io.ByteReader) (Header, int, error) {
 	// 	return Header{}, n, err
 	// }
 	var PI uint16
-	hasPI := packetType.containsPacketIdentifier(packetFlags)
-	if hasPI {
+	if packetType.containsPacketIdentifier(packetFlags) {
 		piMSB, err := transp.ReadByte()
 		if err != nil {
 			return Header{}, n, err
@@ -235,12 +253,6 @@ func (p PacketType) String() string {
 	return s
 }
 
-type controlPacket struct {
-	PacketType PacketType // The type of the MQTT control packet
-	Flags      byte       // Flags for the control packet
-	Payload    []byte     // The payload of the control packet
-}
-
 // decodeRemainingLength expects
 func decodeRemainingLength(b []byte) (value uint32, err error) {
 	multiplier := uint32(1)
@@ -272,15 +284,12 @@ func encodeRemainingLength(remlen uint32, b []byte) (n int) {
 
 // Publish packets only contain PI if QoS > 0
 func (p PacketType) containsPacketIdentifier(flags PacketFlags) bool {
-	if p > 15 {
-		return false
-	}
 	if p == PacketPublish {
 		return flags.QoS() > 0
 	}
 	noPI := p == PacketConnect || p == PacketConnack ||
 		p == PacketPingreq || p == PacketPingresp || p == PacketDisconnect
-	return !noPI
+	return p != 0 && p < 15 && !noPI // Robust condition, returns true only for valid packets.
 }
 
 func (p PacketType) containsPayload() bool {
@@ -324,4 +333,54 @@ func (qos QoSLevel) String() (s string) {
 		s = "undefined QoS"
 	}
 	return s
+}
+
+// Packet specific functions
+
+// VariablesConnect all strings in the variable header must be UTF-8 encoded
+// except password which may be binary data.
+type VariablesConnect struct {
+	// Must be present and unique to the server. UTF-8 encoded string
+	// between 1 and 23 bytes in length although some servers may allow larger ClientIDs.
+	ClientID     string
+	Username     string
+	Password     string
+	WillTopic    string
+	WillMessage  string
+	WillRetain   bool
+	CleanSession bool
+	WillQoS      QoSLevel
+	KeepAlive    uint16
+}
+
+// Flags returns the eighth CONNECT packet byte.
+func (cv *VariablesConnect) Flags() byte {
+	willFlag := cv.WillFlag()
+	hasUsername := cv.Username != ""
+	return b2u8(hasUsername)<<7 | b2u8(hasUsername && cv.Password != "")<<6 | // See  [MQTT-3.1.2-22].
+		b2u8(cv.WillRetain)<<5 | byte(cv.WillQoS&0b11)<<3 |
+		b2u8(willFlag)<<2 | b2u8(cv.CleanSession)<<1
+}
+
+func (cv *VariablesConnect) WillFlag() bool { return cv.WillTopic != "" && cv.WillMessage != "" }
+
+// VarConnack TODO
+
+// VariablesPublish
+type VariablesPublish struct {
+	// Must be present as utf-8 encoded string with NO wildcard characters.
+	// The server may override the TopicName on response according to matching process [Section 4.7]
+	TopicName string
+	// Only present (non-zero) in QoS level 1 or 2.
+	PacketIdentifier uint32
+}
+
+type VariablesSubscribe struct {
+	PacketIdentifier uint16
+	TopicFilters     []SubscribeRequest
+}
+
+type SubscribeRequest struct {
+	Topic string
+	QoS   QoSLevel
 }

@@ -1,12 +1,19 @@
-# arandu-mqtt
+# natiu-mqtt
 ### A low-level, correct MQTT implementation.
-A better-than-paho MQTT client implementation, WIP.
+A better-than-paho MQTT client implementation where the user is owner of payload memory making it suited
+for low memory usage applications.
 
 Using [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)
+
+**Natiu**: Means *mosquito* in the [Guaraní language](https://en.wikipedia.org/wiki/Guarani_language), a language spoken primarily in Paraguay. Commonly written as ñati'û or ñati'ũ.
 
 ## Goals
 This implementation will have a simple embedded-systems implementation in the package
 top level. This implementation will be transport agnostic and non-concurrent. This will make it far easier to modify and reason about. The transport dependent implementations will have their own subpackage, so one package for TCP transport, another for UART, PPP etc.
+
+* Minimal, if any, heap allocations (only using `unsafe` or `tinygo` build tags).
+* Support for TCP transport.
+* User owns payload bytes.
 
 ## Why "better-than-paho"?
 

@@ -3,7 +3,7 @@ package mqtt_test
 import (
 	"testing"
 
-	mqtt "github.com/soypat/arandu-mqtt"
+	mqtt "github.com/soypat/natiu-mqtt"
 )
 
 func TestHeaderLoopback(t *testing.T) {
