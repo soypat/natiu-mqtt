@@ -75,3 +75,41 @@ func b2u8(b bool) uint8 {
 	}
 	return 0
 }
+
+type transport struct {
+	readByte   func() (byte, error)
+	sck        interface{}
+	multiplier int
+	remLen     int
+	len        int
+	state      uint8
+}
+
+func (trp *transport) readnb(b []byte) error {
+	switch trp.state {
+	default:
+		trp.state = 0
+		fallthrough
+	case 0:
+		frc, err := trp.readByte()
+		if err != nil {
+			trp.state = 0
+			return err
+		}
+		if frc == 0 {
+			return nil
+		}
+		trp.len = 0
+		trp.state++
+		fallthrough
+	case 1:
+
+	}
+	return io.EOF
+}
+
+// decodes message length according to MQTT spec.
+func (trp *transport) decodenb() (int, error) {
+	var c byte
+
+}
