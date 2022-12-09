@@ -7,7 +7,25 @@ import (
 	"math"
 )
 
-func encodeMQTTString(w io.Writer, s string) (int, error) {
+// Encode encodes the header into the argument writer. It will encode up to a maximum
+// of 7 bytes, which is the max length header in MQTT v3.1.
+func (hdr Header) Encode(w io.Writer) (n int, err error) {
+	var headerBuf [7]byte
+	headerBuf[0] = hdr.firstByte
+	n = encodeRemainingLength(hdr.RemainingLength, headerBuf[1:])
+	if hdr.PacketIdentifier != 0 {
+		headerBuf[n+1] = byte(hdr.PacketIdentifier >> 8)
+		headerBuf[n+2] = byte(hdr.PacketIdentifier)
+		n += 2
+	}
+	nwritten, err := w.Write(headerBuf[:n])
+	if err == nil && nwritten != n {
+		return nwritten, errors.New("single write did not complete for Header.Encode, use larger underlying buffer")
+	}
+	return nwritten, err
+}
+
+func encodeMQTTString(w io.Writer, s []byte) (int, error) {
 	length := len(s)
 	if length == 0 {
 		return 0, errors.New("cannot encode MQTT string of length 0")
@@ -19,7 +37,7 @@ func encodeMQTTString(w io.Writer, s string) (int, error) {
 	if err != nil {
 		return n, err
 	}
-	n2, err := writeFull(w, bytesFromString(s))
+	n2, err := writeFull(w, s)
 	n += n2
 	if err != nil {
 		return n, err
@@ -40,24 +58,6 @@ func encodeRemainingLength(remlen uint32, b []byte) (n int) {
 		b[n] = encoded
 	}
 	return n
-}
-
-// Encode encodes the header into the argument writer. It will encode up to a maximum
-// of 7 bytes, which is the max length header in MQTT v3.1.
-func (hdr Header) Encode(w io.Writer) (n int, err error) {
-	var headerBuf [7]byte
-	headerBuf[0] = hdr.firstByte
-	n = encodeRemainingLength(hdr.RemainingLength, headerBuf[1:])
-	if hdr.PacketIdentifier != 0 {
-		headerBuf[n+1] = byte(hdr.PacketIdentifier >> 8)
-		headerBuf[n+2] = byte(hdr.PacketIdentifier)
-		n += 2
-	}
-	nwritten, err := w.Write(headerBuf[:n])
-	if err == nil && nwritten != n {
-		return nwritten, errors.New("single write did not complete for Header.Encode, use larger underlying buffer")
-	}
-	return nwritten, err
 }
 
 // All encode{PacketType} functions encode only their variable header.
@@ -100,14 +100,14 @@ func encodeConnect(w io.Writer, varConn VariablesConnect) (n int, err error) {
 		}
 	}
 
-	if varConn.Username != "" {
+	if len(varConn.Username) != 0 {
 		// Username and password.
 		ngot, err = encodeMQTTString(w, varConn.Username)
 		n += ngot
 		if err != nil {
 			return n, err
 		}
-		if varConn.Password != "" {
+		if len(varConn.Password) != 0 {
 			ngot, err = encodeMQTTString(w, varConn.Password)
 			n += ngot
 			if err != nil {
@@ -158,7 +158,7 @@ func encodeSubscribe(w io.Writer, varSub VariablesSubscribe) (n int, err error) 
 	}
 	var vbuf [1]byte
 	for _, hotTopic := range varSub.TopicFilters {
-		ngot, err := encodeMQTTString(w, hotTopic.Topic)
+		ngot, err := encodeMQTTString(w, hotTopic.TopicFilter)
 		n += ngot
 		if err != nil {
 			return n, err
@@ -195,10 +195,7 @@ func encodeUnsubscribe(w io.Writer, varUnsub VariablesUnsubscribe) (n int, err e
 	if len(varUnsub.Topics) == 0 {
 		return 0, errors.New("payload of UNSUBSCRIBE must contain at least one topic")
 	}
-	var vbuf [2]byte
-	vbuf[0] = byte(varUnsub.PacketIdentifier >> 8)
-	vbuf[1] = byte(varUnsub.PacketIdentifier)
-	n, err = writeFull(w, vbuf[:])
+	n, err = encodeUint16(w, varUnsub.PacketIdentifier)
 	if err != nil {
 		return n, err
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"strconv"
 )
 
 // DecodeHeader receives transp, an io.ByteReader that reads from an underlying arbitrary
@@ -22,10 +21,13 @@ func DecodeHeader(transp io.Reader) (Header, int, error) {
 	n := 1
 	rlen, ngot, err := decodeRemainingLength(transp)
 	n += ngot
+	if err != nil {
+		return Header{}, n, err
+	}
 	packetType := PacketType(firstByte >> 4)
 	packetFlags := PacketFlags(firstByte & 0b1111)
-	// TODO(soypat): Should this validation be performed here?
 	if err := packetType.ValidateFlags(packetFlags); err != nil {
+		// Early validation to prevent reading more than necessary from buffer.
 		return Header{}, n, err
 	}
 	var PI uint16
@@ -87,7 +89,7 @@ func readFull(src io.Reader, dst []byte) (int, error) {
 // decodeMQTTString only returns a non-nil string on a succesfull decode.
 func decodeMQTTString(r io.Reader, buffer []byte) ([]byte, int, error) {
 	if len(buffer) < 2 {
-		return nil, 0, errors.New("buffer too small for string decoding (<2)")
+		return nil, 0, ErrUserBufferFull
 	}
 	stringLength, n, err := decodeUint16(r)
 	if err != nil {
@@ -97,7 +99,7 @@ func decodeMQTTString(r io.Reader, buffer []byte) ([]byte, int, error) {
 		return nil, n, errors.New("zero length MQTT string")
 	}
 	if stringLength > uint16(len(buffer)) {
-		return nil, n, errors.New("buffer too small for string of length " + strconv.FormatUint(uint64(stringLength), 10))
+		return nil, n, ErrUserBufferFull // errors.New("buffer too small for string of length " + strconv.FormatUint(uint64(stringLength), 10))
 	}
 	ngot, err := readFull(r, buffer[:stringLength])
 	n += ngot
@@ -125,6 +127,81 @@ func decodeUint16(r io.Reader) (value uint16, n int, err error) {
 	return uint16(vbuf[0])<<8 | uint16(vbuf[1]), n, err
 }
 
+func decodeConnect(r io.Reader, payloadDst []byte) (varConn VariablesConnect, n int, err error) {
+	var ngot int
+	varConn.Protocol, n, err = decodeMQTTString(r, payloadDst)
+	if err != nil {
+		return VariablesConnect{}, n, err
+	}
+	payloadDst = payloadDst[n:]
+	varConn.ProtocolLevel, err = decodeByte(r)
+	if err != nil {
+		return VariablesConnect{}, n, err
+	}
+	n++
+	flags, err := decodeByte(r)
+	if err != nil {
+		return VariablesConnect{}, n, err
+	}
+	n++
+	if flags&1 != 0 { // [MQTT-3.1.2-3].
+		return VariablesConnect{}, n, errors.New("reserved bit set in CONNECT flag")
+	}
+	userNameFlag := flags&(1<<7) != 0
+	passwordFlag := flags&(1<<6) != 0
+	varConn.WillRetain = flags&(1<<5) != 0
+	varConn.WillQoS = QoSLevel(flags>>3) & 0b11
+	willFlag := flags&(1<<2) != 0
+	varConn.CleanSession = flags&(1<<1) != 0
+	if passwordFlag && !userNameFlag {
+		return VariablesConnect{}, n, errors.New("username flag must be set to use password flag")
+	}
+
+	varConn.KeepAlive, ngot, err = decodeUint16(r)
+	n += ngot
+	if err != nil {
+		return VariablesConnect{}, n, err
+	}
+	varConn.ClientID, ngot, err = decodeMQTTString(r, payloadDst)
+	if err != nil {
+		return VariablesConnect{}, n, err
+	}
+	payloadDst = payloadDst[ngot:]
+
+	if willFlag {
+		varConn.WillTopic, ngot, err = decodeMQTTString(r, payloadDst)
+		n += ngot
+		if err != nil {
+			return VariablesConnect{}, n, err
+		}
+		payloadDst = payloadDst[ngot:]
+		varConn.WillMessage, ngot, err = decodeMQTTString(r, payloadDst)
+		n += ngot
+		if err != nil {
+			return VariablesConnect{}, n, err
+		}
+		payloadDst = payloadDst[ngot:]
+	}
+
+	if userNameFlag {
+		// Username and password.
+		varConn.Username, ngot, err = decodeMQTTString(r, payloadDst)
+		n += ngot
+		if err != nil {
+			return VariablesConnect{}, n, err
+		}
+		if passwordFlag {
+			payloadDst = payloadDst[ngot:]
+			varConn.Password, ngot, err = decodeMQTTString(r, payloadDst)
+			n += ngot
+			if err != nil {
+				return VariablesConnect{}, n, err
+			}
+		}
+	}
+	return varConn, n, nil
+}
+
 func decodeConnack(r io.Reader) (VariablesConnack, int, error) {
 	var buf [2]byte
 	n, err := readFull(r, buf[:])
@@ -138,6 +215,7 @@ func decodeConnack(r io.Reader) (VariablesConnack, int, error) {
 	return varConnack, n, nil
 }
 
+// decodePublish Decodes PUBLISH variable header.
 func decodePublish(r io.Reader, payloadDst []byte, qos QoSLevel) (VariablesPublish, int, error) {
 	topic, n, err := decodeMQTTString(r, payloadDst)
 	if err != nil {
@@ -152,26 +230,22 @@ func decodePublish(r io.Reader, payloadDst []byte, qos QoSLevel) (VariablesPubli
 		}
 		PI = pi
 	}
-	// TODO(soypat): Right now we do not use payloadDst efficiently. We copy to heap here with string() call.
-	// Consider changing Variable{PacketName} contents to be []byte types instead of strings.
-	return VariablesPublish{TopicName: string(topic), PacketIdentifier: PI}, n, nil
+	return VariablesPublish{TopicName: topic, PacketIdentifier: PI}, n, nil
 }
 
 func decodePublishResponse(r io.Reader) (uint16, int, error) {
 	return decodeUint16(r)
 }
 
-func decodeSubscribe(r io.Reader, buffer []byte, remainingLen uint32) (varSub VariablesSubscribe, n int, err error) {
-	if len(varSub.TopicFilters) == 0 {
-		return VariablesSubscribe{}, 0, errors.New("payload of SUBSCRIBE must contain at least one topic filter / QoS pair")
-	}
+func decodeSubscribe(r io.Reader, payloadDst []byte, remainingLen uint32) (varSub VariablesSubscribe, n int, err error) {
 	varSub.PacketIdentifier, n, err = decodeUint16(r)
 	if err != nil {
 		return VariablesSubscribe{}, n, err
 	}
 	for n < int(remainingLen) {
-		hotTopic, ngot, err := decodeMQTTString(r, buffer)
+		hotTopic, ngot, err := decodeMQTTString(r, payloadDst)
 		n += ngot
+		payloadDst = payloadDst[ngot:] //Advance buffer pointer to not overwrite.
 		if err != nil {
 			return VariablesSubscribe{}, n, err
 		}
@@ -180,7 +254,7 @@ func decodeSubscribe(r io.Reader, buffer []byte, remainingLen uint32) (varSub Va
 			return VariablesSubscribe{}, n, err
 		}
 		n++
-		varSub.TopicFilters = append(varSub.TopicFilters, SubscribeRequest{Topic: string(hotTopic), QoS: QoSLevel(qos)})
+		varSub.TopicFilters = append(varSub.TopicFilters, SubscribeRequest{TopicFilter: hotTopic, QoS: QoSLevel(qos)})
 	}
 	return varSub, n, nil
 }
@@ -199,4 +273,25 @@ func decodeSuback(r io.Reader, remainingLen uint16) (varSuback VariablesSuback, 
 		varSuback.ReturnCodes = append(varSuback.ReturnCodes, QoSLevel(qos))
 	}
 	return varSuback, n, nil
+}
+
+func decodeUnsubscribe(w io.Reader, payloadDst []byte, remainingLength uint16) (varUnsub VariablesUnsubscribe, n int, err error) {
+	varUnsub.PacketIdentifier, n, err = decodeUint16(w)
+	if err != nil {
+		return VariablesUnsubscribe{}, n, err
+	}
+	for n < int(remainingLength) {
+		coldTopic, ngot, err := decodeMQTTString(w, payloadDst)
+		n += ngot
+		payloadDst = payloadDst[ngot:] // Advance buffer pointer to not overwrite.
+		if err != nil {
+			return VariablesUnsubscribe{}, n, err
+		}
+		varUnsub.Topics = append(varUnsub.Topics, coldTopic)
+	}
+	return varUnsub, n, nil
+}
+
+func decodeUnsuback(r io.Reader) (packetIdentifier uint16, n int, err error) {
+	return decodeUint16(r)
 }

@@ -7,11 +7,10 @@ import (
 const bugReportLink = "Please report bugs at https://github.com/soypat/natiu-mqtt/issues/new "
 
 var (
-	errQoS0NoDup = errors.New("DUP must be 0 for all QoS0 [MQTT-3.3.1-2]")
-	errGotZeroPI = errors.New("packet identifier must be nonzero for packet type")
+	errQoS0NoDup      = errors.New("DUP must be 0 for all QoS0 [MQTT-3.3.1-2]")
+	errGotZeroPI      = errors.New("packet identifier must be nonzero for packet type")
+	ErrUserBufferFull = errors.New("natiu-mqtt: user buffer full")
 )
-
-type transportfunc = func() (byte, error)
 
 // Header represents the bytes preceding the payload in an MQTT packet.
 // This commonly called the Fixed Header, although this Header type also contains
@@ -129,6 +128,7 @@ const (
 	PacketConnect
 	// Server to Client - Connect acknowledgment
 	PacketConnack
+	// Server to client or client to server - contains publish payload.
 	PacketPublish
 	PacketPuback
 	// Publish received. assured delivery part 1
@@ -267,27 +267,39 @@ func (qos QoSLevel) String() (s string) {
 type VariablesConnect struct {
 	// Must be present and unique to the server. UTF-8 encoded string
 	// between 1 and 23 bytes in length although some servers may allow larger ClientIDs.
-	ClientID     string
-	Username     string
-	Password     string
-	WillTopic    string
-	WillMessage  string
-	WillRetain   bool
-	CleanSession bool
-	WillQoS      QoSLevel
-	KeepAlive    uint16
+	ClientID []byte
+	// By default if not set will use 'MQTT' protocol, which is v3.1 compliant.
+	Protocol []byte
+	// By default if set to 0 will use Protocol level 4, which is v3.1 compliant
+	ProtocolLevel byte
+	Username      []byte
+	Password      []byte
+	WillTopic     []byte
+	WillMessage   []byte
+	WillRetain    bool
+	CleanSession  bool
+	WillQoS       QoSLevel
+	KeepAlive     uint16
+}
+
+// StringsLen returns length of all strings in variable header before being encoded.
+// StringsLen is useful to know how much of the user's buffer was consumed during decoding.
+func (vs VariablesConnect) StringsLen() (n int) {
+	return len(vs.ClientID) + len(vs.Protocol) + len(vs.Username) + len(vs.Password) + len(vs.WillTopic) + len(vs.WillMessage)
 }
 
 // Flags returns the eighth CONNECT packet byte.
 func (cv *VariablesConnect) Flags() byte {
 	willFlag := cv.WillFlag()
-	hasUsername := cv.Username != ""
-	return b2u8(hasUsername)<<7 | b2u8(hasUsername && cv.Password != "")<<6 | // See  [MQTT-3.1.2-22].
+	hasUsername := len(cv.Username) == 0
+	return b2u8(hasUsername)<<7 | b2u8(hasUsername && len(cv.Password) == 0)<<6 | // See  [MQTT-3.1.2-22].
 		b2u8(cv.WillRetain)<<5 | byte(cv.WillQoS&0b11)<<3 |
 		b2u8(willFlag)<<2 | b2u8(cv.CleanSession)<<1
 }
 
-func (cv *VariablesConnect) WillFlag() bool { return cv.WillTopic != "" && cv.WillMessage != "" }
+func (cv *VariablesConnect) WillFlag() bool {
+	return len(cv.WillTopic) == 0 && len(cv.WillMessage) == 0
+}
 
 // VarConnack TODO
 
@@ -295,19 +307,32 @@ func (cv *VariablesConnect) WillFlag() bool { return cv.WillTopic != "" && cv.Wi
 type VariablesPublish struct {
 	// Must be present as utf-8 encoded string with NO wildcard characters.
 	// The server may override the TopicName on response according to matching process [Section 4.7]
-	TopicName string
+	TopicName []byte
 	// Only present (non-zero) in QoS level 1 or 2.
 	PacketIdentifier uint16
 }
+
+// StringsLen returns length of all strings in variable header before being encoded.
+// StringsLen is useful to know how much of the user's buffer was consumed during decoding.
+func (vp VariablesPublish) StringsLen() int { return len(vp.TopicName) }
 
 type VariablesSubscribe struct {
 	PacketIdentifier uint16
 	TopicFilters     []SubscribeRequest
 }
 
+// StringsLen returns length of all strings in variable header before being encoded.
+// StringsLen is useful to know how much of the user's buffer was consumed during decoding.
+func (vs VariablesSubscribe) StringsLen() (n int) {
+	for _, sub := range vs.TopicFilters {
+		n += len(sub.TopicFilter)
+	}
+	return n
+}
+
 type SubscribeRequest struct {
 	// utf8 encoded topic or match pattern for topic filter.
-	Topic string
+	TopicFilter []byte
 	// The desired QoS level.
 	QoS QoSLevel
 }
@@ -322,7 +347,16 @@ type VariablesSuback struct {
 
 type VariablesUnsubscribe struct {
 	PacketIdentifier uint16
-	Topics           []string
+	Topics           [][]byte
+}
+
+// StringsLen returns length of all strings in variable header before being encoded.
+// StringsLen is useful to know how much of the user's buffer was consumed during decoding.
+func (vs VariablesUnsubscribe) StringsLen() (n int) {
+	for _, sub := range vs.Topics {
+		n += len(sub)
+	}
+	return n
 }
 
 type VariablesConnack struct {
@@ -331,6 +365,17 @@ type VariablesConnack struct {
 	// Octet
 	ReturnCode ConnectReturnCode
 }
+
+// SessionPresent returns true if the SP bit is set in the CONNACK Ack flags. This bit indicates whether
+// the ClientID already has a session on the server.
+//   - If server accepts a connection with CleanSession set to 1 the server MUST set SP to 0 (false).
+//   - If server accepts a connection with CleanSession set to 0 SP depends on whether the server
+//     already has stored a Session state for the supplied Client ID. If the server has stored a Session
+//     then SP MUST set to 1, else MUST set to 0.
+//
+// In both cases above this is in addition to returning a zero CONNACK return code. If the CONNACK return code
+// is non-zero then SP MUST set to 0.
+func (vc VariablesConnack) SessionPresent() bool { return vc.AckFlags&1 != 0 }
 
 // validate provides early validation of CONNACK variables.
 func (vc VariablesConnack) validate() error {

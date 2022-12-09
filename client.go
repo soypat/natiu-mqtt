@@ -19,6 +19,15 @@ type Client struct {
 	}
 }
 
+type Message struct {
+	QoS        QoSLevel
+	Retained   byte
+	Duplicated byte
+	ID         uint16
+	Payload    []byte
+	Topic      string
+}
+
 func NewClient(configuration ...ClientOption) (Client, error) {
 	var cfg ClientConfig
 	if len(configuration) == 0 {
