@@ -2,7 +2,21 @@ package mqtt
 
 import (
 	"errors"
+	"io"
 )
+
+// Decoder provides an abstraction for an MQTT variable header decoding implementation.
+// This is because heap allocations are necessary to be able to decode any MQTT packet.
+// Some compile targets are restrictive in terms of memory usage, so their decoding algorithms may
+// differ.
+type Decoder interface {
+	DecodeConnack(r io.Reader) (VariablesConnack, int, error)
+	DecodeConnect(r io.Reader) (varConn VariablesConnect, n int, err error)
+	DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error)
+	DecodeSuback(r io.Reader, remainingLen uint32) (varSuback VariablesSuback, n int, err error)
+	DecodeSubscribe(r io.Reader, remainingLen uint32) (varSub VariablesSubscribe, n int, err error)
+	DecodeUnsubscribe(r io.Reader, remainingLength uint32) (varUnsub VariablesUnsubscribe, n int, err error)
+}
 
 const bugReportLink = "Please report bugs at https://github.com/soypat/natiu-mqtt/issues/new "
 
@@ -268,24 +282,31 @@ type VariablesConnect struct {
 	// Must be present and unique to the server. UTF-8 encoded string
 	// between 1 and 23 bytes in length although some servers may allow larger ClientIDs.
 	ClientID []byte
-	// By default if not set will use 'MQTT' protocol, which is v3.1 compliant.
+	// By default will be set to 'MQTT' protocol if nil, which is v3.1 compliant.
 	Protocol []byte
 	// By default if set to 0 will use Protocol level 4, which is v3.1 compliant
 	ProtocolLevel byte
 	Username      []byte
-	Password      []byte
-	WillTopic     []byte
-	WillMessage   []byte
-	WillRetain    bool
-	CleanSession  bool
-	WillQoS       QoSLevel
-	KeepAlive     uint16
+	// For password to be used username must also be set. See [MQTT-3.1.2-22].
+	Password     []byte
+	WillTopic    []byte
+	WillMessage  []byte
+	WillRetain   bool
+	CleanSession bool
+	WillQoS      QoSLevel
+	KeepAlive    uint16
 }
 
 // StringsLen returns length of all strings in variable header before being encoded.
 // StringsLen is useful to know how much of the user's buffer was consumed during decoding.
-func (vs VariablesConnect) StringsLen() (n int) {
-	return len(vs.ClientID) + len(vs.Protocol) + len(vs.Username) + len(vs.Password) + len(vs.WillTopic) + len(vs.WillMessage)
+func (vs *VariablesConnect) StringsLen() (n int) {
+	if len(vs.Username) != 0 {
+		n += len(vs.Password) // Make sure password is only added when username is enabled.
+	}
+	if vs.WillFlag() {
+		n += len(vs.WillTopic) + len(vs.WillMessage)
+	}
+	return len(vs.ClientID) + len(vs.Protocol) + len(vs.Username)
 }
 
 // Flags returns the eighth CONNECT packet byte.
@@ -298,7 +319,7 @@ func (cv *VariablesConnect) Flags() byte {
 }
 
 func (cv *VariablesConnect) WillFlag() bool {
-	return len(cv.WillTopic) == 0 && len(cv.WillMessage) == 0
+	return len(cv.WillTopic) != 0 && len(cv.WillMessage) != 0
 }
 
 // VarConnack TODO
@@ -413,4 +434,48 @@ func (rc ConnectReturnCode) String() (s string) {
 		s = "client unauthorized"
 	}
 	return s
+}
+
+// DecodeHeader receives transp, an io.ByteReader that reads from an underlying arbitrary
+// transport protocol. transp should start returning the first byte of the MQTT packet.
+// Decode header returns the decoded header and any error that prevented it from
+// reading the entire header as specified by the MQTT v3.1 protocol.
+// It performs the minimal validating to ensure it does not over-read the header's contents.
+// Header.Validate() should be called after DecodeHeader for a complete validation.
+func DecodeHeader(transp io.Reader) (Header, int, error) {
+	// Start parsing fixed header.
+	firstByte, err := decodeByte(transp)
+	if err != nil {
+		return Header{}, 0, err
+	}
+	n := 1
+	rlen, ngot, err := decodeRemainingLength(transp)
+	n += ngot
+	if err != nil {
+		return Header{}, n, err
+	}
+	packetType := PacketType(firstByte >> 4)
+	packetFlags := PacketFlags(firstByte & 0b1111)
+	if err := packetType.ValidateFlags(packetFlags); err != nil {
+		// Early validation to prevent reading more than necessary from buffer.
+		return Header{}, n, err
+	}
+	var PI uint16
+	if packetType.containsPacketIdentifier(packetFlags) {
+		pi, ngot, err := decodeUint16(transp)
+		n += ngot
+		if err != nil {
+			return Header{}, n, err
+		}
+		if pi == 0 {
+			return Header{}, n, errGotZeroPI
+		}
+		PI = pi
+	}
+	hdr := Header{
+		firstByte:        firstByte,
+		RemainingLength:  rlen,
+		PacketIdentifier: PI,
+	}
+	return hdr, n, nil
 }
