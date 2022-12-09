@@ -1,10 +1,46 @@
 package mqtt
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"math"
 )
+
+func encodeMQTTString(w io.Writer, s string) (int, error) {
+	length := len(s)
+	if length == 0 {
+		return 0, errors.New("cannot encode MQTT string of length 0")
+	}
+	if length > math.MaxUint16 {
+		return 0, errors.New("cannot encode MQTT string of length > MaxUint16 or length 0")
+	}
+	n, err := encodeUint16(w, uint16(len(s)))
+	if err != nil {
+		return n, err
+	}
+	n2, err := writeFull(w, bytesFromString(s))
+	n += n2
+	if err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+func encodeRemainingLength(remlen uint32, b []byte) (n int) {
+	if remlen > maxRemainingLengthSize {
+		panic("remaining length too large")
+	}
+	for n = 0; remlen > 0 && n < maxRemainingLengthSize; n++ {
+		encoded := byte(remlen % 128)
+		remlen /= 128
+		if remlen > 0 {
+			encoded |= 128
+		}
+		b[n] = encoded
+	}
+	return n
+}
 
 // Encode encodes the header into the argument writer. It will encode up to a maximum
 // of 7 bytes, which is the max length header in MQTT v3.1.
@@ -95,10 +131,20 @@ func encodePublish(w io.Writer, varPub VariablesPublish) (n int, err error) {
 }
 
 // encodePublishResponse encodes a PUBACK, PUBREL, PUBREC, PUBCOMP packet. Does not encode fixed header or user payload.
-func encodePublishResponse(w io.Writer, packetIdentifier uint16) (n int, err error) {
+func encodePublishResponse(w io.Writer, packetIdentifier uint16) (int, error) {
+	return encodeUint16(w, packetIdentifier)
+}
+
+func encodeByte(w io.Writer, value byte) (n int, err error) {
+	var vbuf [1]byte
+	vbuf[0] = value
+	return w.Write(vbuf[:])
+}
+
+func encodeUint16(w io.Writer, value uint16) (n int, err error) {
 	var vbuf [2]byte
-	vbuf[0] = byte(packetIdentifier >> 8)
-	vbuf[1] = byte(packetIdentifier)
+	vbuf[0] = byte(value >> 8)
+	vbuf[1] = byte(value)
 	return writeFull(w, vbuf[:])
 }
 
@@ -106,20 +152,18 @@ func encodeSubscribe(w io.Writer, varSub VariablesSubscribe) (n int, err error) 
 	if len(varSub.TopicFilters) == 0 {
 		return 0, errors.New("payload of SUBSCRIBE must contain at least one topic filter / QoS pair")
 	}
-	var vbuf [2]byte
-	vbuf[0] = byte(varSub.PacketIdentifier >> 8)
-	vbuf[1] = byte(varSub.PacketIdentifier)
-	n, err = writeFull(w, vbuf[:])
+	n, err = encodeUint16(w, varSub.PacketIdentifier)
 	if err != nil {
 		return n, err
 	}
-	for _, sub := range varSub.TopicFilters {
-		ngot, err := encodeMQTTString(w, sub.Topic)
+	var vbuf [1]byte
+	for _, hotTopic := range varSub.TopicFilters {
+		ngot, err := encodeMQTTString(w, hotTopic.Topic)
 		n += ngot
 		if err != nil {
 			return n, err
 		}
-		vbuf[0] = byte(sub.QoS & 0b11)
+		vbuf[0] = byte(hotTopic.QoS & 0b11)
 		ngot, err = w.Write(vbuf[:1])
 		n += ngot
 		if err != nil {
@@ -129,33 +173,69 @@ func encodeSubscribe(w io.Writer, varSub VariablesSubscribe) (n int, err error) 
 	return n, nil
 }
 
-func encodeSuback(w io.Writer)
+func encodeSuback(w io.Writer, varSuback VariablesSuback) (n int, err error) {
+	n, err = encodeUint16(w, varSuback.PacketIdentifier)
+	if err != nil {
+		return n, err
+	}
+	for _, qos := range varSuback.ReturnCodes {
+		if !qos.IsValid() {
+			panic("encodeSuback received an invalid QoS return code. " + bugReportLink)
+		}
+		ngot, err := encodeByte(w, byte(qos))
+		n += ngot
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
 
-func writeFull(w io.Writer, rawData []byte) (int, error) {
+func encodeUnsubscribe(w io.Writer, varUnsub VariablesUnsubscribe) (n int, err error) {
+	if len(varUnsub.Topics) == 0 {
+		return 0, errors.New("payload of UNSUBSCRIBE must contain at least one topic")
+	}
+	var vbuf [2]byte
+	vbuf[0] = byte(varUnsub.PacketIdentifier >> 8)
+	vbuf[1] = byte(varUnsub.PacketIdentifier)
+	n, err = writeFull(w, vbuf[:])
+	if err != nil {
+		return n, err
+	}
+	for _, coldTopic := range varUnsub.Topics {
+		ngot, err := encodeMQTTString(w, coldTopic)
+		n += ngot
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+func encodeUnsuback(w io.Writer, packetIdentifier uint16) (int, error) {
+	return encodeUint16(w, packetIdentifier)
+}
+
+// Pings and DISCONNECT do not have variable headers so no encoders here.
+
+func writeFull(dst io.Writer, src []byte) (int, error) {
 	// dataPtr := 0
-	n, err := w.Write(rawData)
-	if err == nil && n != len(rawData) {
-		panic("TODO")
-		return n, errors.New("TODO IMPLEMENT THIS")
+	n, err := dst.Write(src)
+	if err == nil && n != len(src) {
+		// TODO(soypat): Avoid heavy heap allocation by implementing lightweight algorithm here.
+		var buffer [256]byte
+		i, err := io.CopyBuffer(dst, bytes.NewBuffer(src[n:]), buffer[:])
+		return n + int(i), err
 	}
 	return n, err
 }
 
-func encodeMQTTString(w io.Writer, s string) (int, error) {
-	length := len(s)
-	if length > math.MaxUint16 {
-		return 0, errors.New("cannot encode MQTT string of length > MaxUint16")
+// bool to uint8
+//
+//go:inline
+func b2u8(b bool) uint8 {
+	if b {
+		return 1
 	}
-	var lengthBuf [2]byte
-	lengthBuf[0] = byte(length >> 8) // MSB
-	lengthBuf[1] = byte(length)      // MSB
-	n, err := writeFull(w, lengthBuf[:])
-	if err != nil {
-		return n, err
-	}
-	n2, err := writeFull(w, bytesFromString(s))
-	if err != nil {
-		return n + n2, err
-	}
-	return n + n2, nil
+	return 0
 }

@@ -8,12 +8,3 @@ type Message struct {
 	Payload    []byte
 	Topic      string
 }
-
-type connackData struct {
-	rc             byte
-	sessionPresent byte
-}
-
-type subackData struct {
-	grantedQoS uint8
-}
