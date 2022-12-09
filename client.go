@@ -1,31 +1,22 @@
 package mqtt
 
 import (
+	"errors"
 	"time"
 )
 
 type Client struct {
 	nextPacketID    uint
 	cmdTimeout      time.Duration
-	buf             []byte
-	readbuf         []byte
 	keepalive       uint16
 	pingOutstanding byte
 	isConnected     int
 	cleanSession    bool
+	decoder         Decoder
 	msgHandlers     [maxMessageHandlers]struct {
 		topicFilter string
-		handler     func(*Message)
+		handler     func(*Header)
 	}
-}
-
-type Message struct {
-	QoS        QoSLevel
-	Retained   byte
-	Duplicated byte
-	ID         uint16
-	Payload    []byte
-	Topic      string
 }
 
 func NewClient(configuration ...ClientOption) (Client, error) {
@@ -39,17 +30,18 @@ func NewClient(configuration ...ClientOption) (Client, error) {
 			return Client{}, cfg.err
 		}
 	}
+	if cfg.Decoder == nil {
+		return Client{}, errors.New("nil Decoder or not set")
+	}
 	return Client{
 		nextPacketID: 1,
-		readbuf:      cfg.ReadBuffer,
-		buf:          cfg.WriteBuffer,
+		decoder:      cfg.Decoder,
 	}, nil
 }
 
 type ClientConfig struct {
-	ReadBuffer  []byte
-	WriteBuffer []byte
-	err         error
+	Decoder Decoder
+	err     error
 }
 
 // SetError sets an error during configuration such that
@@ -68,11 +60,8 @@ func WithClientConfig(cfg ClientConfig) ClientOption {
 
 func DefaultClientConfig() ClientOption {
 	return func(c *ClientConfig) {
-		if len(c.ReadBuffer) == 0 {
-			c.ReadBuffer = make([]byte, defaultBufferLen)
-		}
-		if len(c.WriteBuffer) == 0 {
-			c.WriteBuffer = make([]byte, defaultBufferLen)
+		if c.Decoder == nil {
+			c.Decoder = DecoderLowmem{UserBuffer: make([]byte, 1500)}
 		}
 	}
 }

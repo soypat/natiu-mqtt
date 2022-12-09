@@ -1,11 +1,17 @@
 # natiu-mqtt
 ### A low-level, correct MQTT implementation.
-A better-than-paho MQTT client implementation where the user is owner of payload memory making it suited
-for low memory usage applications.
-
-Using [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)
+A dead-simple, extensible MQTT implementation.
 
 **Natiu**: Means *mosquito* in the [Guaraní language](https://en.wikipedia.org/wiki/Guarani_language), a language spoken primarily in Paraguay. Commonly written as ñati'û or ñati'ũ.
+
+_Still a WIP._
+
+## Highlights
+* **Modular**: Client implementation leaves allocating parts up to the [`Decoder`](./mqtt.go) interface type. Users can choose to use non-allocating or allocating implementations of the 3 method interface.
+* **No uneeded allocations**: The PUBLISH application message is not handled by this library, the user receives an `io.Reader` with the underlying transport bytes. This prevents allocations on `natiu-mqtt` side.
+* **V3.1.1**: Compliant with [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)
+* **No external dependencies**: Nada. Nope.
+
 
 ## Goals
 This implementation will have a simple embedded-systems implementation in the package

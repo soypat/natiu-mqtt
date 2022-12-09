@@ -7,15 +7,19 @@ import (
 
 // Decoder provides an abstraction for an MQTT variable header decoding implementation.
 // This is because heap allocations are necessary to be able to decode any MQTT packet.
-// Some compile targets are restrictive in terms of memory usage, so their decoding algorithms may
-// differ.
+// Some compile targets are restrictive in terms of memory usage, so the best decoder for the situation may differ.
 type Decoder interface {
-	DecodeConnack(r io.Reader) (VariablesConnack, int, error)
-	DecodeConnect(r io.Reader) (varConn VariablesConnect, n int, err error)
-	DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error)
-	DecodeSuback(r io.Reader, remainingLen uint32) (varSuback VariablesSuback, n int, err error)
-	DecodeSubscribe(r io.Reader, remainingLen uint32) (varSub VariablesSubscribe, n int, err error)
-	DecodeUnsubscribe(r io.Reader, remainingLength uint32) (varUnsub VariablesUnsubscribe, n int, err error)
+	// TODO(soypat): The CONNACK, PUBLISH and SUBACK decoders can probably be excluded
+	// from this interface since they do not need heap allocations, or if they
+	// do end uf allocating their allocations are short lived, within scope of function.
+
+	// DecodeConnack(r io.Reader) (VariablesConnack, int, error)
+	// DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error)
+	// DecodeSuback(r io.Reader, remainingLen uint32) (VariablesSuback, int, error)
+
+	DecodeConnect(r io.Reader) (VariablesConnect, int, error)
+	DecodeSubscribe(r io.Reader, remainingLen uint32) (VariablesSubscribe, int, error)
+	DecodeUnsubscribe(r io.Reader, remainingLength uint32) (VariablesUnsubscribe, int, error)
 }
 
 const bugReportLink = "Please report bugs at https://github.com/soypat/natiu-mqtt/issues/new "
@@ -130,36 +134,7 @@ func (h Header) String() string {
 	return h.Type().String() + " " + h.Flags().String()
 }
 
-// PacketType represents the 4 MSB bits in the first byte in an MQTT fixed header.
-// takes on values 1..14. PacketType and PacketFlags are present in all MQTT packets.
-type PacketType byte
-
-const (
-	_ PacketType = iota // 0 Forbidden/Reserved
-	// Client to Server - Client request to connect to a Server.
-	// After a network connection is established by a client to a server, the first
-	// packet sent from the client to the server must be a Connect packet.
-	PacketConnect
-	// Server to Client - Connect acknowledgment
-	PacketConnack
-	// Server to client or client to server - contains publish payload.
-	PacketPublish
-	PacketPuback
-	// Publish received. assured delivery part 1
-	PacketPubrec
-	// Publish release. Assured delivery part 2.
-	PacketPubrel
-	// Publish complete. Assured delivery part 3.
-	PacketPubcomp
-	// Subscribe - client subscribe request.
-	PacketSubscribe
-	PacketSuback
-	PacketUnsubscribe
-	PacketUnsuback
-	PacketPingreq
-	PacketPingresp
-	PacketDisconnect
-)
+// PacketType lists in definitions.go
 
 func (p PacketType) ValidateFlags(flag4bits PacketFlags) error {
 	onlyBit1Set := flag4bits&^(1<<1) == 0
@@ -231,26 +206,7 @@ func (p PacketType) containsPayload() bool {
 		p == PacketUnsubscribe || p == PacketUnsuback
 }
 
-// QoSLevel represents the Quality of Service specified by the client.
-// The server can choose to provide or reject requested QoS. The values
-// of QoS range from 0 to 2, each representing a differnt methodology for
-// message delivery guarantees.
-type QoSLevel uint8
-
-// QoS indicates the level of assurance for packet delivery.
-const (
-	// QoS0 at most once delivery. Arrives either once or not at all. Depends on capabilities of underlying network.
-	QoS0 QoSLevel = iota
-	// QoS1 at least once delivery. Ensures message arrives at receiver at least once.
-	QoS1
-	// QoS2 Exactly once delivery. Highest quality service. For use when neither loss nor duplication of messages are acceptable.
-	// There is an increased overhead associated with this quality of service.
-	QoS2
-	// Reserved, must not be used.
-	reservedQoS3
-	// QoSSubfail marks a failure in SUBACK. This value cannot be encoded into a header.
-	QoSSubfail QoSLevel = 0x80
-)
+// QoSLevel defined in definitions.go
 
 // IsValid returns true if qos is a valid Quality of Service or if it is
 // the SUBACK response failure to subscribe return code.
@@ -324,7 +280,8 @@ func (cv *VariablesConnect) WillFlag() bool {
 
 // VarConnack TODO
 
-// VariablesPublish
+// VariablesPublish represents the variable header of a PUBLISH packet. It does not
+// include the payload with the topic data.
 type VariablesPublish struct {
 	// Must be present as utf-8 encoded string with NO wildcard characters.
 	// The server may override the TopicName on response according to matching process [Section 4.7]
@@ -337,6 +294,8 @@ type VariablesPublish struct {
 // StringsLen is useful to know how much of the user's buffer was consumed during decoding.
 func (vp VariablesPublish) StringsLen() int { return len(vp.TopicName) }
 
+// VariablesSubscribe represents the variable header of a SUBSCRIBE packet.
+// It encodes the topic filters requested by a Client and the desired QoS for each topic.
 type VariablesSubscribe struct {
 	PacketIdentifier uint16
 	TopicFilters     []SubscribeRequest
@@ -351,6 +310,9 @@ func (vs VariablesSubscribe) StringsLen() (n int) {
 	return n
 }
 
+// SubscribeRequest is relevant only to SUBSCRIBE packets where several SubscribeRequest
+// each encode a topic filter that is to be matched on the server side and a desired
+// QoS for each matched topic.
 type SubscribeRequest struct {
 	// utf8 encoded topic or match pattern for topic filter.
 	TopicFilter []byte
@@ -358,6 +320,7 @@ type SubscribeRequest struct {
 	QoS QoSLevel
 }
 
+// VariablesSuback represents the variable header of a SUBACK packet.
 type VariablesSuback struct {
 	PacketIdentifier uint16
 	// Each return code corresponds to a topic filter in the SUBSCRIBE
@@ -366,6 +329,7 @@ type VariablesSuback struct {
 	ReturnCodes []QoSLevel
 }
 
+// VariablesUnsubscribe represents the variable header of a UNSUBSCRIBE packet.
 type VariablesUnsubscribe struct {
 	PacketIdentifier uint16
 	Topics           [][]byte
@@ -406,17 +370,7 @@ func (vc VariablesConnack) validate() error {
 	return nil
 }
 
-type ConnectReturnCode uint8
-
-const (
-	ReturnCodeConnAccepted ConnectReturnCode = iota
-	ReturnCodeUnnaceptableProtocol
-	ReturnCodeIdentifierRejected
-	ReturnCodeServerUnavailable
-	ReturnCodeBadUserCredentials
-	ReturnCodeUnauthorized
-	minInvalidReturnCode
-)
+// ConnectReturnCode defined in definitions.go
 
 func (rc ConnectReturnCode) String() (s string) {
 	switch rc {
