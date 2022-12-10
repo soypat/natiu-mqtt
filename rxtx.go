@@ -26,7 +26,21 @@ type RxTx struct {
 	// User defined decoder for allocating packets.
 	userDec Decoder
 	// Default decoder for non allocating packets.
-	dec DecoderLowmem
+	dec        DecoderLowmem
+	ScratchBuf []byte
+}
+
+func (rxtx *RxTx) exhaustReader(r io.Reader) (err error) {
+	if len(rxtx.ScratchBuf) == 0 {
+		rxtx.ScratchBuf = make([]byte, 1024) // Lazy initialization when needed.
+	}
+	for err == nil {
+		_, err = r.Read(rxtx.ScratchBuf[:])
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 // NewRxTx creates a new RxTx. Before use user must configure OnX fields by setting a function
@@ -40,14 +54,6 @@ func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
 		userDec: decoder,
 		// No memory needed for DecoderLowmem for this use.
 		dec: DecoderLowmem{},
-		// Define no-op functions to prevent nil function calls. These ignore packets as they arrive.
-		OnConnack: func(*RxTx, VariablesConnack) error { return nil },
-		OnPub:     func(*RxTx, VariablesPublish, io.Reader) error { return nil },
-		OnConnect: func(*RxTx, *VariablesConnect) error { return nil },
-		OnSuback:  func(*RxTx, VariablesSuback) error { return nil },
-		OnSub:     func(*RxTx, VariablesSubscribe) error { return nil },
-		OnUnsub:   func(*RxTx, VariablesUnsubscribe) error { return nil },
-		OnOther:   func(*RxTx, uint16) error { return nil },
 	}
 	return cc, nil
 }
@@ -76,9 +82,14 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		}
 		payloadLen := int(hdr.RemainingLength) - ngot
 		lr := io.LimitedReader{R: rxtx.trp, N: int64(payloadLen)}
-		err = rxtx.OnPub(rxtx, vp, &lr)
+		if rxtx.OnPub != nil {
+			err = rxtx.OnPub(rxtx, vp, &lr)
+		} else {
+			err = rxtx.exhaustReader(&lr)
+		}
+
 		if lr.N != 0 && err == nil {
-			err = errors.New("OnPub did not completely read payload")
+			err = errors.New("expected OnPub to completely read payload")
 			break
 		}
 
@@ -89,7 +100,9 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		err = rxtx.OnConnack(rxtx, vc)
+		if rxtx.OnConnack != nil {
+			err = rxtx.OnConnack(rxtx, vc)
+		}
 
 	case PacketConnect:
 		var vc VariablesConnect
@@ -98,7 +111,9 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		err = rxtx.OnConnect(rxtx, &vc)
+		if rxtx.OnConnect != nil {
+			err = rxtx.OnConnect(rxtx, &vc)
+		}
 
 	case PacketSuback:
 		var vsbck VariablesSuback
@@ -107,7 +122,9 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		err = rxtx.OnSuback(rxtx, vsbck)
+		if rxtx.OnSuback != nil {
+			err = rxtx.OnSuback(rxtx, vsbck)
+		}
 
 	case PacketSubscribe:
 		var vsbck VariablesSubscribe
@@ -116,7 +133,9 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		err = rxtx.OnSub(rxtx, vsbck)
+		if rxtx.OnSub != nil {
+			err = rxtx.OnSub(rxtx, vsbck)
+		}
 
 	case PacketUnsubscribe:
 		var vunsub VariablesUnsubscribe
@@ -125,7 +144,9 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		err = rxtx.OnUnsub(rxtx, vunsub)
+		if rxtx.OnUnsub != nil {
+			err = rxtx.OnUnsub(rxtx, vunsub)
+		}
 
 	case PacketPuback, PacketPubrec, PacketPubrel, PacketPubcomp, PacketUnsuback:
 		// Only PI, no payload.
@@ -138,7 +159,10 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		fallthrough
 	case PacketDisconnect, PacketPingreq, PacketPingresp:
 		// No payload or variable header.
-		err = rxtx.OnOther(rxtx, packetIdentifier)
+		if rxtx.OnOther != nil {
+			err = rxtx.OnOther(rxtx, packetIdentifier)
+		}
+
 	default:
 		panic("unreachable")
 	}
@@ -169,19 +193,33 @@ func (rxtx *RxTx) WriteConnack(h Header, varConnack VariablesConnack) error {
 	return err
 }
 
-func (rxtx *RxTx) WritePublish(h Header, varPub VariablesPublish) error {
+func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload []byte) error {
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err
 	}
 	_, err = encodePublish(rxtx.trp, varPub)
-	return err
-}
-
-func (rxtx *RxTx) WriteOther(h Header, packetIdentifier uint16) error {
-	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err
 	}
-	return nil
+	_, err = writeFull(rxtx.trp, payload)
+	return err
+}
+
+// WriteOther writes PUBACK, PUBREC, PUBREL, PUBCOMP, UNSUBACK packets containing non-zero packet identfiers
+// and DISCONNECT, PINGREQ, PINGRESP packets with no packet identifier. It automatically sets the RemainingLength field.
+func (rxtx *RxTx) WriteOther(h Header, packetIdentifier uint16) (err error) {
+	hasPI := h.HasPacketIdentifier()
+	if hasPI {
+		h.RemainingLength = 2
+		_, err = h.Encode(rxtx.trp)
+		if err != nil {
+			return err
+		}
+		_, err = encodeUint16(rxtx.trp, packetIdentifier)
+	} else {
+		h.RemainingLength = 0
+		_, err = h.Encode(rxtx.trp)
+	}
+	return err
 }

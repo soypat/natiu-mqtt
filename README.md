@@ -13,6 +13,7 @@ _Still a WIP._
 * **No uneeded allocations**: The PUBLISH application message is not handled by this library, the user receives an `io.Reader` with the underlying transport bytes. This prevents allocations on `natiu-mqtt` side.
 * **V3.1.1**: Compliant with [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)
 * **No external dependencies**: Nada. Nope.
+* **Data oriented design**: Minimizes abstractions or objects for the data on the wire.
 
 
 ## Goals

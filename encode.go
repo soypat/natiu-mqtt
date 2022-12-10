@@ -13,11 +13,7 @@ func (hdr Header) Encode(w io.Writer) (n int, err error) {
 	var headerBuf [5]byte
 	headerBuf[0] = hdr.firstByte
 	n = encodeRemainingLength(hdr.RemainingLength, headerBuf[1:])
-	nwritten, err := w.Write(headerBuf[:n+1])
-	if err == nil && nwritten != n {
-		return nwritten, errors.New("single write did not complete for Header.Encode, use larger underlying buffer")
-	}
-	return nwritten, err
+	return writeFull(w, headerBuf[:n+1])
 }
 
 func encodeMQTTString(w io.Writer, s []byte) (int, error) {

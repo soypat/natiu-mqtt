@@ -8,6 +8,8 @@ If you are new to MQTT start by reading definitions.go.
 package mqtt
 
 const (
+	defaultProtocolLevel    = 4
+	defaultProtocol         = "MQTT"
 	maxMessageHandlers      = 10
 	defaultBufferLen        = 1500
 	maxRemainingLengthSize  = 4
