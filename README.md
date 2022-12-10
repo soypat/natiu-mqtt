@@ -8,7 +8,7 @@ _Still a WIP._
 ## Highlights
 * **Modular**
     * Client implementation leaves allocating parts up to the [`Decoder`](./mqtt.go) interface type. Users can choose to use non-allocating or allocating implementations of the 3 method interface.
-    * [`RxTx`](./rxtx.go) type lets one build an MQTT implementation from scratch for any transport.
+    * [`RxTx`](./rxtx.go) type lets one build an MQTT implementation from scratch for any transport. No server/client logic defined at this level.
 
 * **No uneeded allocations**: The PUBLISH application message is not handled by this library, the user receives an `io.Reader` with the underlying transport bytes. This prevents allocations on `natiu-mqtt` side.
 * **V3.1.1**: Compliant with [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)
@@ -23,8 +23,51 @@ top level. This implementation will be transport agnostic and non-concurrent. Th
 * Support for TCP transport.
 * User owns payload bytes.
 
-## Why "better-than-paho"?
+### Example of using a TCP connection with an RxTx
+API subject to change.
+```go
+func main() {
+    // Dial a TCP connection.
+    const defaultMQTTPort = ":1883"
+	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
+	if err != nil {
+		log.Fatal(err)
+	}
 
+    // Create the RxTx MQTT IO handler.
+	rxtx, err := mqtt.NewRxTx(conn, mqtt.DecoderLowmem{UserBuffer: make([]byte, 1500)})
+	if err != nil {
+		log.Fatal(err)
+	}
+    // Add a handler on CONNACK packet.
+	rxtx.OnConnack = func(rt *mqtt.RxTx, vc mqtt.VariablesConnack) error {
+		log.Printf("%v received, SP=%v, rc=%v", rt.LastReceivedHeader.String(), vc.SessionPresent(), vc.ReturnCode.String())
+		return nil
+	}
+	
+    // Prepare to send first MQTT packet over wire.
+	varConnect := mqtt.VariablesConnect{
+		ClientID:      []byte("salamanca"),
+		Protocol:      []byte("MQTT"),
+		ProtocolLevel: 4,
+		KeepAlive:     60,
+		CleanSession:  true,
+		WillMessage:   []byte("MQTT is okay, I guess"),
+		WillTopic:     []byte("mqttnerds"),
+		WillRetain:    true,
+	}
+    // PacketFlags set automatically for all packets that are not PUBLISH. So set to 0.
+	hdr, err := mqtt.NewHeader(mqtt.PacketConnect, 0, uint32(varConnect.Size()))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = rxtx.WriteConnect(hdr, &varConnect)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+```
+## Why not just use paho?
 
 Some issues with Eclipse's Paho implementation:
 * [Inherent data races on API side](https://github.com/eclipse/paho.mqtt.golang/issues/550). The implementation is so notoriously hard to modify this issue has been in a frozen state.

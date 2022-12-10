@@ -1,10 +1,47 @@
 package mqtt_test
 
 import (
+	"log"
+	"net"
 	"testing"
 
 	mqtt "github.com/soypat/natiu-mqtt"
 )
+
+func ExampleRxTx() {
+	const defaultMQTTPort = ":1883"
+	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+	rxtx, err := mqtt.NewRxTx(conn, mqtt.DecoderLowmem{UserBuffer: make([]byte, 1500)})
+	if err != nil {
+		log.Fatal(err)
+	}
+	rxtx.OnConnack = func(rt *mqtt.RxTx, vc mqtt.VariablesConnack) error {
+		log.Printf("%v received, SP=%v, rc=%v", rt.LastReceivedHeader.String(), vc.SessionPresent(), vc.ReturnCode.String())
+		return nil
+	}
+	// PacketFlags set automatically for all packets that are not PUBLISH. So set to 0.
+	varConnect := mqtt.VariablesConnect{
+		ClientID:      []byte("salamanca"),
+		Protocol:      []byte("MQTT"),
+		ProtocolLevel: 4,
+		KeepAlive:     60,
+		CleanSession:  true,
+		WillMessage:   []byte("MQTT is okay, I guess"),
+		WillTopic:     []byte("mqttnerds"),
+		WillRetain:    true,
+	}
+	hdr, err := mqtt.NewHeader(mqtt.PacketConnect, 0, uint32(varConnect.Size()))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = rxtx.WriteConnect(hdr, &varConnect)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func TestHeaderLoopback(t *testing.T) {
 	pubQoS0flag, err := mqtt.NewPublishFlags(mqtt.QoS0, false, true)
