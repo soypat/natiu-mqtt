@@ -1,67 +1,62 @@
 package mqtt
 
 import (
+	"context"
 	"errors"
-	"time"
 )
 
-type Client struct {
-	nextPacketID    uint
-	cmdTimeout      time.Duration
-	keepalive       uint16
-	pingOutstanding byte
-	isConnected     int
-	cleanSession    bool
-	decoder         Decoder
-	msgHandlers     [maxMessageHandlers]struct {
-		topicFilter string
-		handler     func(*Header)
-	}
-}
-
-func NewClient(configuration ...ClientOption) (Client, error) {
-	var cfg ClientConfig
-	if len(configuration) == 0 {
-		configuration = []ClientOption{DefaultClientConfig()}
-	}
-	for _, option := range configuration {
-		option(&cfg)
-		if cfg.err != nil {
-			return Client{}, cfg.err
-		}
-	}
-	if cfg.Decoder == nil {
-		return Client{}, errors.New("nil Decoder or not set")
-	}
-	return Client{
-		nextPacketID: 1,
-		decoder:      cfg.Decoder,
-	}, nil
-}
-
-type ClientConfig struct {
+// Config is a generic
+type Config struct {
 	Decoder Decoder
+	// OnError is called on errors during MQTT operation. If OnError returns
+	// an error itself then Client should shutdown gracefully and give user error.
+	OnError func(error) error
+	Ctx     context.Context
 	err     error
 }
 
 // SetError sets an error during configuration such that
 // NewClient fails and returns that error.
-func (cfg *ClientConfig) SetError(err error) {
-	cfg.err = err
+func (cfg *Config) SetError(err error) {
+	if cfg.err == nil {
+		cfg.err = err // First error encountered wins.
+	}
 }
 
-type ClientOption func(*ClientConfig)
+type ConfigOption func(*Config)
 
-func WithClientConfig(cfg ClientConfig) ClientOption {
-	return func(c *ClientConfig) {
+func WithClientConfig(cfg Config) ConfigOption {
+	return func(c *Config) {
 		*c = cfg
 	}
 }
 
-func DefaultClientConfig() ClientOption {
-	return func(c *ClientConfig) {
+func DefaultClientConfig() ConfigOption {
+	return func(c *Config) {
 		if c.Decoder == nil {
 			c.Decoder = DecoderLowmem{UserBuffer: make([]byte, 1500)}
 		}
+		if c.Ctx == nil {
+			c.Ctx = context.Background()
+		}
+		if c.OnError == nil {
+			c.OnError = func(err error) error { return err }
+		}
 	}
+}
+
+func applyConfigs(cfg *Config, cfgs []ConfigOption) error {
+	if len(cfgs) == 0 {
+		cfgs = []ConfigOption{DefaultClientConfig()}
+	}
+	for _, option := range cfgs {
+		option(cfg)
+		if cfg.err != nil {
+			return cfg.err
+		}
+	}
+	if cfg.Decoder == nil {
+		return errors.New("nil Decoder or not set")
+	}
+	return nil
 }

@@ -1,45 +1,36 @@
-package mqtt_test
+package mqtt
 
-import (
-	"testing"
+import "testing"
 
-	mqtt "github.com/soypat/natiu-mqtt"
+const (
+	qos0Flag = PacketFlags(QoS0 << 1)
+	qos1Flag = PacketFlags(QoS1 << 1)
+	qos2Flag = PacketFlags(QoS2 << 1)
 )
 
-func TestHeaderLoopback(t *testing.T) {
-	pubQoS0flag, err := mqtt.NewPublishFlags(mqtt.QoS0, false, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, header := range []struct {
-		tp    mqtt.PacketType
-		flags mqtt.PacketFlags
-
-		id     uint16
-		remlen uint32
+func TestHasPacketIdentifer(t *testing.T) {
+	for _, test := range []struct {
+		h      Header
+		expect bool
 	}{
-		{tp: mqtt.PacketPubrel, id: 1},
-		{tp: mqtt.PacketPingreq},
-		{tp: mqtt.PacketPublish, flags: pubQoS0flag},
-		{tp: mqtt.PacketConnect, id: 1},
+		{h: newHeader(PacketConnack, 0, 0), expect: false},
+		{h: newHeader(PacketConnect, 0, 0), expect: false},
+		{h: newHeader(PacketPublish, qos0Flag, 0), expect: false},
+		{h: newHeader(PacketPublish, qos1Flag, 0), expect: true},
+		{h: newHeader(PacketPublish, qos2Flag, 0), expect: true},
+		{h: newHeader(PacketPuback, 0, 0), expect: true},
+		{h: newHeader(PacketPubrec, 0, 0), expect: true},
+		{h: newHeader(PacketPubrel, 0, 0), expect: true},
+		{h: newHeader(PacketPubcomp, 0, 0), expect: true},
+		{h: newHeader(PacketUnsubscribe, 0, 0), expect: true},
+		{h: newHeader(PacketUnsuback, 0, 0), expect: true},
+		{h: newHeader(PacketPingreq, 0, 0), expect: false},
+		{h: newHeader(PacketPingresp, 0, 0), expect: false},
+		{h: newHeader(PacketDisconnect, 0, 0), expect: false},
 	} {
-		h, err := mqtt.NewHeader(header.tp, header.flags, header.id, header.remlen)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h.PacketIdentifier != header.id {
-			t.Error("identifier mismatch")
-		}
-		if h.RemainingLength != header.remlen {
-			t.Error("remaining length mismatch")
-		}
-		flagsGot := h.Flags()
-		if header.tp == mqtt.PacketPublish && flagsGot != header.flags {
-			t.Error("publish flag mismatch", flagsGot, header.flags)
-		}
-		typeGot := h.Type()
-		if typeGot != header.tp {
-			t.Error("type mismatch")
+		got := test.h.HasPacketIdentifier()
+		if got != test.expect {
+			t.Errorf("%s: got %v, expected %v", test.h.String(), got, test.expect)
 		}
 	}
 }

@@ -9,14 +9,15 @@ import (
 // This is because heap allocations are necessary to be able to decode any MQTT packet.
 // Some compile targets are restrictive in terms of memory usage, so the best decoder for the situation may differ.
 type Decoder interface {
-	// TODO(soypat): The CONNACK, PUBLISH and SUBACK decoders can probably be excluded
+	// TODO(soypat): The CONNACK and SUBACK decoders can probably be excluded
 	// from this interface since they do not need heap allocations, or if they
 	// do end uf allocating their allocations are short lived, within scope of function.
 
 	// DecodeConnack(r io.Reader) (VariablesConnack, int, error)
-	// DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error)
+
 	// DecodeSuback(r io.Reader, remainingLen uint32) (VariablesSuback, int, error)
 
+	DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error)
 	DecodeConnect(r io.Reader) (VariablesConnect, int, error)
 	DecodeSubscribe(r io.Reader, remainingLen uint32) (VariablesSubscribe, int, error)
 	DecodeUnsubscribe(r io.Reader, remainingLength uint32) (VariablesUnsubscribe, int, error)
@@ -35,9 +36,21 @@ var (
 // PacketIdentifier, which is part of the Variable Header and may or may not be present
 // in an MQTT packet.
 type Header struct {
-	firstByte        byte
-	RemainingLength  uint32
-	PacketIdentifier uint16
+	// firstByte contains packet type in MSB bits 7-4 and flags in LSB bits 3-0.
+	firstByte       byte
+	RemainingLength uint32
+}
+
+// HasPacketIdentifier returns true if the MQTT packet has a 2 octet packet identifier number.
+func (hd Header) HasPacketIdentifier() bool {
+	tp := hd.Type()
+	qos := hd.Flags().QoS()
+	if tp == PacketPublish && (qos == 1 || qos == 2) {
+		return true
+	}
+	noPI := tp == PacketConnect || tp == PacketConnack ||
+		tp == PacketPingreq || tp == PacketPingresp || tp == PacketDisconnect || tp == PacketPublish
+	return tp != 0 && tp < 15 && !noPI
 }
 
 // PacketFlags represents the LSB 4 bits in the first byte in an MQTT fixed header.
@@ -47,6 +60,7 @@ type PacketFlags uint8
 func (pf PacketFlags) QoS() QoSLevel   { return QoSLevel((pf >> 1) & 0b11) }
 func (pf PacketFlags) Retain() bool    { return pf&1 != 0 }
 func (pf PacketFlags) Duplicate() bool { return pf&(1<<3) != 0 }
+
 func (pf PacketFlags) String() string {
 	if pf > 15 {
 		return "invalid packet flags"
@@ -75,7 +89,7 @@ func NewPublishFlags(qos QoSLevel, dup, retain bool) (PacketFlags, error) {
 
 // NewHeader creates a new Header for a packetType and returns an error if invalid
 // arguments are passed in. It will set expected reserved flags for non-PUBLISH packets.
-func NewHeader(packetType PacketType, packetFlags PacketFlags, identifier uint16, remainingLen uint32) (Header, error) {
+func NewHeader(packetType PacketType, packetFlags PacketFlags, remainingLen uint32) (Header, error) {
 	if packetType != PacketPublish {
 		// Set reserved flag for non-publish packets.
 		ctlBit := b2u8(packetType == PacketPubrel || packetType == PacketSubscribe || packetType == PacketUnsubscribe)
@@ -87,18 +101,17 @@ func NewHeader(packetType PacketType, packetFlags PacketFlags, identifier uint16
 	if packetType > 15 {
 		return Header{}, errors.New("packet type exceeds 4 bit range 0..15")
 	}
-	h := newHeader(packetType, packetFlags, identifier, remainingLen)
+	h := newHeader(packetType, packetFlags, remainingLen)
 	if err := h.Validate(); err != nil {
 		return Header{}, err
 	}
 	return h, nil
 }
 
-func newHeader(pt PacketType, pf PacketFlags, identifier uint16, rlen uint32) Header {
+func newHeader(pt PacketType, pf PacketFlags, rlen uint32) Header {
 	return Header{ // Creates a header with no error checking. For internal use.
-		firstByte:        byte(pt)<<4 | byte(pf),
-		RemainingLength:  rlen,
-		PacketIdentifier: identifier,
+		firstByte:       byte(pt)<<4 | byte(pf),
+		RemainingLength: rlen,
 	}
 }
 
@@ -110,10 +123,6 @@ func (h Header) Validate() error {
 	err := ptype.ValidateFlags(pflags)
 	if err != nil {
 		return err
-	}
-	hasPI := ptype.containsPacketIdentifier(pflags)
-	if hasPI && h.PacketIdentifier == 0 {
-		return errGotZeroPI
 	}
 	if ptype == PacketPublish {
 		dup := pflags.Duplicate()
@@ -414,22 +423,9 @@ func DecodeHeader(transp io.Reader) (Header, int, error) {
 		// Early validation to prevent reading more than necessary from buffer.
 		return Header{}, n, err
 	}
-	var PI uint16
-	if packetType.containsPacketIdentifier(packetFlags) {
-		pi, ngot, err := decodeUint16(transp)
-		n += ngot
-		if err != nil {
-			return Header{}, n, err
-		}
-		if pi == 0 {
-			return Header{}, n, errGotZeroPI
-		}
-		PI = pi
-	}
 	hdr := Header{
-		firstByte:        firstByte,
-		RemainingLength:  rlen,
-		PacketIdentifier: PI,
+		firstByte:       firstByte,
+		RemainingLength: rlen,
 	}
 	return hdr, n, nil
 }

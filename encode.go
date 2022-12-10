@@ -10,15 +10,10 @@ import (
 // Encode encodes the header into the argument writer. It will encode up to a maximum
 // of 7 bytes, which is the max length header in MQTT v3.1.
 func (hdr Header) Encode(w io.Writer) (n int, err error) {
-	var headerBuf [7]byte
+	var headerBuf [5]byte
 	headerBuf[0] = hdr.firstByte
 	n = encodeRemainingLength(hdr.RemainingLength, headerBuf[1:])
-	if hdr.PacketIdentifier != 0 {
-		headerBuf[n+1] = byte(hdr.PacketIdentifier >> 8)
-		headerBuf[n+2] = byte(hdr.PacketIdentifier)
-		n += 2
-	}
-	nwritten, err := w.Write(headerBuf[:n])
+	nwritten, err := w.Write(headerBuf[:n+1])
 	if err == nil && nwritten != n {
 		return nwritten, errors.New("single write did not complete for Header.Encode, use larger underlying buffer")
 	}
@@ -45,6 +40,7 @@ func encodeMQTTString(w io.Writer, s []byte) (int, error) {
 	return n, nil
 }
 
+// encodeRemainingLength encodes between 1 to 4 bytes.
 func encodeRemainingLength(remlen uint32, b []byte) (n int) {
 	if remlen > maxRemainingLengthSize {
 		panic("remaining length too large")
@@ -64,7 +60,7 @@ func encodeRemainingLength(remlen uint32, b []byte) (n int) {
 
 // encodeConnect encodes a CONNECT packet variable header over w given connVars. Does not encode
 // either the fixed header or the Packet Payload.
-func encodeConnect(w io.Writer, varConn VariablesConnect) (n int, err error) {
+func encodeConnect(w io.Writer, varConn *VariablesConnect) (n int, err error) {
 	// Begin encoding variable header buffer.
 	var varHeaderBuf [10]byte
 	// Set protocol name 'MQTT' and protocol level 4.
@@ -116,6 +112,13 @@ func encodeConnect(w io.Writer, varConn VariablesConnect) (n int, err error) {
 		}
 	}
 	return n, nil
+}
+
+func encodeConnack(w io.Writer, varConn VariablesConnack) (int, error) {
+	var buf [2]byte
+	buf[0] = varConn.AckFlags
+	buf[1] = byte(varConn.ReturnCode)
+	return writeFull(w, buf[:])
 }
 
 // encodePublish encodes PUBLISH packet variable header. Does not encode fixed header or user payload.
