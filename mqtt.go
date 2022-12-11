@@ -28,6 +28,10 @@ const bugReportLink = "Please report bugs at https://github.com/soypat/natiu-mqt
 var (
 	errQoS0NoDup = errors.New("DUP must be 0 for all QoS0 [MQTT-3.3.1-2]")
 	// errGotZeroPI      = errors.New("packet identifier must be nonzero for packet type")
+
+	// natiu-mqtt depends on user provided buffers for string and byte slice allocation.
+	// If a buffer is too small for the incoming strings or for marshalling a subscription topic
+	// then the implementation should return this error.
 	ErrUserBufferFull = errors.New("natiu-mqtt: user buffer full")
 )
 
@@ -235,9 +239,8 @@ func (p PacketType) String() string {
 
 // QoSLevel defined in definitions.go
 
-// IsValid returns true if qos is a valid Quality of Service or if it is
-// the SUBACK response failure to subscribe return code.
-func (qos QoSLevel) IsValid() bool { return qos <= QoS2 || qos == QoSSubfail }
+// IsValid returns true if qos is a valid Quality of Service.
+func (qos QoSLevel) IsValid() bool { return qos <= QoS2 }
 
 // String returns a pretty-string representation of qos i.e: "QoS0". Does not allocate memory.
 func (qos QoSLevel) String() (s string) {
@@ -536,4 +539,18 @@ func (vc *VariablesConnect) SetDefaultMQTT(clientID []byte) {
 	if vc.KeepAlive == 0 {
 		vc.KeepAlive = 60
 	}
+}
+
+func (vsub *VariablesSubscribe) Validate() error {
+	if len(vsub.TopicFilters) == 0 {
+		return errors.New("no topic filters in VariablesSubscribe")
+	}
+	for _, v := range vsub.TopicFilters {
+		if !v.QoS.IsValid() {
+			return errors.New("invalid QoS in VariablesSubscribe")
+		} else if len(v.TopicFilter) == 0 {
+			return errors.New("got empty topic filter in VariablesSubscribe")
+		}
+	}
+	return nil
 }
