@@ -62,7 +62,7 @@ const (
 	// The variable header contains the packet identifier. The payload contains a list of octet return codes for each subscription requested by client, see [VariablesSuback].
 	PacketSuback
 	// An UNSUBSCRIBE Packet is sent by the Client to the Server, to unsubscribe from topics.
-	// The variable header contains the packet identifier. Its payload contains a list of mqtt encoded strings corresponing to unsubscribed topics, see [VariablesUnsubscribe].
+	// The variable header contains the packet identifier. Its payload contains a list of mqtt encoded strings corresponding to unsubscribed topics, see [VariablesUnsubscribe].
 	PacketUnsubscribe
 	// The UNSUBACK Packet is sent by the Server to the Client to confirm receipt of an UNSUBSCRIBE Packet.
 	// The variable header contains the packet identifier. It has no payload.
@@ -83,7 +83,7 @@ const (
 
 // QoSLevel represents the Quality of Service specified by the client.
 // The server can choose to provide or reject requested QoS. The values
-// of QoS range from 0 to 2, each representing a differnt methodology for
+// of QoS range from 0 to 2, each representing a different methodology for
 // message delivery guarantees.
 type QoSLevel uint8
 
@@ -99,12 +99,12 @@ const (
 	// Reserved, must not be used.
 	reservedQoS3
 	// QoSSubfail marks a failure in SUBACK. This value cannot be encoded into a header
-	// and is only returned upon an unsuccesful subscribe to a topic in an SUBACK packet.
+	// and is only returned upon an unsuccessful subscribe to a topic in an SUBACK packet.
 	QoSSubfail QoSLevel = 0x80
 )
 
 // ConnectReturnCode represents the CONNACK return code, which is the second byte in the variable header.
-// It indicates if the connection was succesful (0 value) or if the connection attempt failed on the server side.
+// It indicates if the connection was successful (0 value) or if the connection attempt failed on the server side.
 type ConnectReturnCode uint8
 
 const (

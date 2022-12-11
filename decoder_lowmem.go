@@ -94,7 +94,7 @@ func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n i
 	return varConn, n, nil
 }
 
-// DecodeConnack implements [Decoder] interface. It is the responsability of the caller
+// DecodeConnack implements [Decoder] interface. It is the responsibility of the caller
 // to handle a non-zero [ConnectReturnCode].
 func (d DecoderLowmem) DecodeConnack(r io.Reader) (VariablesConnack, int, error) {
 	var buf [2]byte
@@ -242,7 +242,7 @@ func decodeMQTTString(r io.Reader, buffer []byte) ([]byte, int, error) {
 	ngot, err := readFull(r, buffer[:stringLength])
 	n += ngot
 	if err != nil && errors.Is(err, io.EOF) && uint16(ngot) == stringLength {
-		err = nil // MQTT string was read succesfully albeit with an EOF right at the end.
+		err = nil // MQTT string was read successfully albeit with an EOF right at the end.
 	}
 	return buffer[:stringLength], n, err
 }
@@ -251,7 +251,7 @@ func decodeByte(r io.Reader) (value byte, err error) {
 	var vbuf [1]byte
 	n, err := r.Read(vbuf[:])
 	if err != nil && errors.Is(err, io.EOF) && n == 1 {
-		err = nil // Byte was read succesfully albeit with an EOF.
+		err = nil // Byte was read successfully albeit with an EOF.
 	}
 	return vbuf[0], err
 }
@@ -260,7 +260,7 @@ func decodeUint16(r io.Reader) (value uint16, n int, err error) {
 	var vbuf [2]byte
 	n, err = readFull(r, vbuf[:])
 	if err != nil && errors.Is(err, io.EOF) && n == 2 {
-		err = nil // integer was read succesfully albeit with an EOF.
+		err = nil // integer was read successfully albeit with an EOF.
 	}
 	return uint16(vbuf[0])<<8 | uint16(vbuf[1]), n, err
 }
