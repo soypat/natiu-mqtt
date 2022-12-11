@@ -42,6 +42,7 @@ func TestHasPacketIdentifer(t *testing.T) {
 		{h: newHeader(PacketPingresp, 0, 0), expect: false},
 		{h: newHeader(PacketDisconnect, 0, 0), expect: false},
 	} {
+		t.Log("tested ", test.h.String())
 		got := test.h.HasPacketIdentifier()
 		if got != test.expect {
 			t.Errorf("%s: got %v, expected %v", test.h.String(), got, test.expect)
@@ -109,6 +110,24 @@ func TestVariablesConnectFlags(t *testing.T) {
 	}
 }
 
+func TestHeaderSize(t *testing.T) {
+	for _, test := range []struct {
+		h      Header
+		expect int
+	}{
+		{h: newHeader(1, 0, 2), expect: 2},
+		{h: newHeader(1, 0, 128), expect: 3},
+		{h: newHeader(1, 0, 0xffff), expect: 4},
+		{h: newHeader(1, 0, 0xffff_ff), expect: 5},
+		{h: newHeader(1, 0, 0xffff_ffff), expect: 0}, // bad remaining length
+	} {
+		got := test.h.Size()
+		if got != test.expect {
+			t.Error("size mismatch for remlen:", test.h.RemainingLength, got, test.expect)
+		}
+	}
+}
+
 func TestVariablesConnectSize(t *testing.T) {
 	var varConn VariablesConnect
 	varConn.SetDefaultMQTT([]byte("salamanca"))
@@ -135,7 +154,7 @@ func TestRxTxLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	rxtx.SetTransport(buf)
 	//
 	// Send CONNECT packet over wire.
 	//
@@ -188,6 +207,7 @@ func TestRxTxLoopback(t *testing.T) {
 			AckFlags:   1,                            //SP set
 			ReturnCode: ReturnCodeBadUserCredentials, // Bad User credentials
 		}
+		t.Log("loopback connack:", varConnck.String())
 		err = rxtx.WriteConnack(varConnck)
 		if err != nil {
 			t.Fatal(err)
@@ -263,6 +283,38 @@ func TestRxTxLoopback(t *testing.T) {
 		if !callbackExecuted {
 			t.Error("OnPub callback not executed")
 		}
+	}
+
+	//
+	// Send PUBLISH packet over wire and ignore packet.
+	//
+	{
+		publishPayload := []byte("ertytgbhjjhundsaip;vf[oniw[aondmiksfvoWDNFOEWOPndsafr;poulikujyhtgbfrvdcsxzaesxt dfcgvfhbg kjnlkm/'.")
+		varPublish := VariablesPublish{
+			TopicName:        []byte("now-for-something-completely-different"),
+			PacketIdentifier: math.MaxUint16,
+		}
+		pubflags, err := NewPublishFlags(QoS1, true, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		publishHeader := newHeader(PacketPublish, pubflags, uint32(varPublish.Size()+len(publishPayload)))
+		err = rxtx.WritePublishPayload(publishHeader, varPublish, publishPayload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rxtx.OnPub = nil
+
+		n, err := rxtx.ReadNextPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectSize := publishHeader.Size() + varPublish.Size()
+		if n != expectSize {
+			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
+		}
+
 	}
 
 	//
@@ -414,6 +466,10 @@ func TestRxTxLoopback(t *testing.T) {
 		if !callbackExecuted {
 			t.Error("OnOther callback not executed")
 		}
+	}
+	err = rxtx.Close()
+	if err != nil {
+		t.Error(err)
 	}
 }
 
