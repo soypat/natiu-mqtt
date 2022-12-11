@@ -21,37 +21,26 @@ type RxTx struct {
 	OnSub    func(*RxTx, VariablesSubscribe) error
 	OnSuback func(*RxTx, VariablesSuback) error
 	OnUnsub  func(*RxTx, VariablesUnsubscribe) error
-	// Transport
+	// Transport over which packets are read and written to.
+	// Not exported since RxTx type might be composed of embedded Rx and Tx types in future. TBD.
 	trp io.ReadWriteCloser
 	// User defined decoder for allocating packets.
-	userDec Decoder
+	userDecoder Decoder
 	// Default decoder for non allocating packets.
 	dec        DecoderLowmem
 	ScratchBuf []byte
 }
 
-func (rxtx *RxTx) exhaustReader(r io.Reader) (err error) {
-	if len(rxtx.ScratchBuf) == 0 {
-		rxtx.ScratchBuf = make([]byte, 1024) // Lazy initialization when needed.
-	}
-	for err == nil {
-		_, err = r.Read(rxtx.ScratchBuf[:])
-	}
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-	return err
-}
-
 // NewRxTx creates a new RxTx. Before use user must configure OnX fields by setting a function
-// to perform an action each time a packet is received.
+// to perform an action each time a packet is received. After a call to transport.Close()
+// all future calls must return errors until the transport is replaced with [RxTx.SetTransport].
 func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
 	if transport == nil || decoder == nil {
 		return nil, errors.New("got nil transport io.ReadWriteCloser or nil Decoder")
 	}
 	cc := &RxTx{
-		trp:     transport,
-		userDec: decoder,
+		trp:         transport,
+		userDecoder: decoder,
 		// No memory needed for DecoderLowmem for this use.
 		dec: DecoderLowmem{},
 	}
@@ -61,10 +50,17 @@ func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
 // Close closes the underlying transport.
 func (rxtx *RxTx) Close() error { return rxtx.trp.Close() }
 
+// SetTransport sets the rxtx's reader and writer.
+func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
+	rxtx.trp = transport
+}
+
+// ReadNextPacket reads the next packet in the transport. If it fails it closes the transport
+// and the underlying transport must be reset.
 func (rxtx *RxTx) ReadNextPacket() (int, error) {
 	hdr, n, err := DecodeHeader(rxtx.trp)
 	if err != nil {
-		rxtx.trp.Close()
+		rxtx.Close()
 		return n, err
 	}
 	rxtx.LastReceivedHeader = hdr
@@ -75,7 +71,7 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 	switch hdr.Type() {
 	case PacketPublish:
 		var vp VariablesPublish
-		vp, ngot, err = rxtx.userDec.DecodePublish(rxtx.trp, hdr.Flags().QoS())
+		vp, ngot, err = rxtx.userDecoder.DecodePublish(rxtx.trp, hdr.Flags().QoS())
 		n += ngot
 		if err != nil {
 			break
@@ -106,7 +102,7 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 
 	case PacketConnect:
 		var vc VariablesConnect
-		vc, ngot, err = rxtx.userDec.DecodeConnect(rxtx.trp)
+		vc, ngot, err = rxtx.userDecoder.DecodeConnect(rxtx.trp)
 		n += ngot
 		if err != nil {
 			break
@@ -128,7 +124,7 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 
 	case PacketSubscribe:
 		var vsbck VariablesSubscribe
-		vsbck, ngot, err = rxtx.userDec.DecodeSubscribe(rxtx.trp, hdr.RemainingLength)
+		vsbck, ngot, err = rxtx.userDecoder.DecodeSubscribe(rxtx.trp, hdr.RemainingLength)
 		n += ngot
 		if err != nil {
 			break
@@ -139,7 +135,7 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 
 	case PacketUnsubscribe:
 		var vunsub VariablesUnsubscribe
-		vunsub, ngot, err = rxtx.userDec.DecodeUnsubscribe(rxtx.trp, hdr.RemainingLength)
+		vunsub, ngot, err = rxtx.userDecoder.DecodeUnsubscribe(rxtx.trp, hdr.RemainingLength)
 		n += ngot
 		if err != nil {
 			break
@@ -164,17 +160,33 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		}
 
 	default:
+		// Header Decode should return an error on incorrect package type receive.
+		// This could be tested via fuzzing.
 		panic("unreachable")
 	}
 
 	if err != nil {
-		rxtx.trp.Close()
+		rxtx.Close()
 	}
 	return n, err
 }
 
-// WriteConnack encodes a CONNECT packet over the wire.
-func (rxtx *RxTx) WriteConnect(h Header, varConn *VariablesConnect) error {
+func (rxtx *RxTx) exhaustReader(r io.Reader) (err error) {
+	if len(rxtx.ScratchBuf) == 0 {
+		rxtx.ScratchBuf = make([]byte, 1024) // Lazy initialization when needed.
+	}
+	for err == nil {
+		_, err = r.Read(rxtx.ScratchBuf[:])
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
+// WriteConnack writes a CONNECT packet over the transport.
+func (rxtx *RxTx) WriteConnect(varConn *VariablesConnect) error {
+	h := newHeader(PacketConnect, 0, uint32(varConn.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err
@@ -183,8 +195,9 @@ func (rxtx *RxTx) WriteConnect(h Header, varConn *VariablesConnect) error {
 	return err
 }
 
-// WriteConnack encodes a CONNACK packet over the wire.
-func (rxtx *RxTx) WriteConnack(h Header, varConnack VariablesConnack) error {
+// WriteConnack writes a CONNACK packet over the transport.
+func (rxtx *RxTx) WriteConnack(varConnack VariablesConnack) error {
+	h := newHeader(PacketConnack, 0, uint32(varConnack.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err
@@ -193,7 +206,10 @@ func (rxtx *RxTx) WriteConnack(h Header, varConnack VariablesConnack) error {
 	return err
 }
 
+// WritePublishPayload writes a PUBLISH packet over the transport along with the
+// Application Message in the payload. payload can be zero-length.
 func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload []byte) error {
+	h.RemainingLength = uint32(varPub.Size() + len(payload))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err
@@ -203,6 +219,39 @@ func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload
 		return err
 	}
 	_, err = writeFull(rxtx.trp, payload)
+	return err
+}
+
+// WriteSubscribe writes an SUBSCRIBE packet over the transport.
+func (rxtx *RxTx) WriteSubscribe(varSub VariablesSubscribe) error {
+	h := newHeader(PacketSubscribe, flagsPubrelSubUnsub, uint32(varSub.Size()))
+	_, err := h.Encode(rxtx.trp)
+	if err != nil {
+		return err
+	}
+	_, err = encodeSubscribe(rxtx.trp, varSub)
+	return err
+}
+
+// WriteSuback writes an UNSUBACK packet over the transport.
+func (rxtx *RxTx) WriteSuback(varSub VariablesSuback) error {
+	h := newHeader(PacketSuback, 0, uint32(varSub.Size()))
+	_, err := h.Encode(rxtx.trp)
+	if err != nil {
+		return err
+	}
+	_, err = encodeSuback(rxtx.trp, varSub)
+	return err
+}
+
+// WriteUnsubscribe writes an UNSUBSCRIBE packet over the transport.
+func (rxtx *RxTx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
+	h := newHeader(PacketUnsubscribe, flagsPubrelSubUnsub, uint32(varUnsub.Size()))
+	_, err := h.Encode(rxtx.trp)
+	if err != nil {
+		return err
+	}
+	_, err = encodeUnsubscribe(rxtx.trp, varUnsub)
 	return err
 }
 

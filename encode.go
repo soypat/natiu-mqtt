@@ -38,8 +38,8 @@ func encodeMQTTString(w io.Writer, s []byte) (int, error) {
 
 // encodeRemainingLength encodes between 1 to 4 bytes.
 func encodeRemainingLength(remlen uint32, b []byte) (n int) {
-	if remlen > maxRemainingLengthSize {
-		panic("remaining length too large")
+	if remlen == 0 || remlen > maxRemainingLengthValue {
+		panic("remaining length zero or too large")
 	}
 	for n = 0; remlen > 0 && n < maxRemainingLengthSize; n++ {
 		encoded := byte(remlen % 128)
@@ -129,11 +129,6 @@ func encodePublish(w io.Writer, varPub VariablesPublish) (n int, err error) {
 	return writeFull(w, vbuf[:])
 }
 
-// encodePublishResponse encodes a PUBACK, PUBREL, PUBREC, PUBCOMP packet. Does not encode fixed header or user payload.
-func encodePublishResponse(w io.Writer, packetIdentifier uint16) (int, error) {
-	return encodeUint16(w, packetIdentifier)
-}
-
 func encodeByte(w io.Writer, value byte) (n int, err error) {
 	var vbuf [1]byte
 	vbuf[0] = value
@@ -206,10 +201,6 @@ func encodeUnsubscribe(w io.Writer, varUnsub VariablesUnsubscribe) (n int, err e
 		}
 	}
 	return n, nil
-}
-
-func encodeUnsuback(w io.Writer, packetIdentifier uint16) (int, error) {
-	return encodeUint16(w, packetIdentifier)
 }
 
 // Pings and DISCONNECT do not have variable headers so no encoders here.

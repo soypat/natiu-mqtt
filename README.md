@@ -57,12 +57,8 @@ func main() {
 		WillTopic:     []byte("mqttnerds"),
 		WillRetain:    true,
 	}
-    // PacketFlags set automatically for all packets that are not PUBLISH. So set to 0.
-	hdr, err := mqtt.NewHeader(mqtt.PacketConnect, 0, uint32(varConnect.Size()))
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = rxtx.WriteConnect(hdr, &varConnect)
+    // Header set automatically for all packets that are not PUBLISH.
+	err = rxtx.WriteConnect(&varConnect)
 	if err != nil {
 		log.Fatal(err)
 	}

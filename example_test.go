@@ -33,11 +33,7 @@ func ExampleRxTx() {
 		WillTopic:     []byte("mqttnerds"),
 		WillRetain:    true,
 	}
-	hdr, err := mqtt.NewHeader(mqtt.PacketConnect, 0, uint32(varConnect.Size()))
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = rxtx.WriteConnect(hdr, &varConnect)
+	err = rxtx.WriteConnect(&varConnect)
 	if err != nil {
 		log.Fatal(err)
 	}

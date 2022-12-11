@@ -9,7 +9,9 @@ import (
 // DecoderLowmem implements the [Decoder] interface for unmarshalling Variable headers
 // of MQTT packets. This particular implementation avoids heap allocations to ensure
 // minimal memory usage during decoding. The UserBuffer is used up to it's length.
+// Decode Calls that receive strings invalidate strings decoded in previous calls.
 // Needless to say, this implementation is NOT safe for concurrent use.
+// Calls that allocate strings or bytes are contained in the [Decoder] interface.
 type DecoderLowmem struct {
 	UserBuffer []byte
 }
@@ -22,7 +24,7 @@ func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n i
 	if err != nil {
 		return VariablesConnect{}, n, err
 	}
-	payloadDst = payloadDst[n:]
+	payloadDst = payloadDst[len(varConn.Protocol):]
 	varConn.ProtocolLevel, err = decodeByte(r)
 	if err != nil {
 		return VariablesConnect{}, n, err
@@ -55,7 +57,8 @@ func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n i
 	if err != nil {
 		return VariablesConnect{}, n, err
 	}
-	payloadDst = payloadDst[ngot:]
+	n += ngot
+	payloadDst = payloadDst[len(varConn.ClientID):]
 
 	if willFlag {
 		varConn.WillTopic, ngot, err = decodeMQTTString(r, payloadDst)
@@ -63,13 +66,13 @@ func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n i
 		if err != nil {
 			return VariablesConnect{}, n, err
 		}
-		payloadDst = payloadDst[ngot:]
+		payloadDst = payloadDst[len(varConn.WillTopic):]
 		varConn.WillMessage, ngot, err = decodeMQTTString(r, payloadDst)
 		n += ngot
 		if err != nil {
 			return VariablesConnect{}, n, err
 		}
-		payloadDst = payloadDst[ngot:]
+		payloadDst = payloadDst[len(varConn.WillMessage):]
 	}
 
 	if userNameFlag {
@@ -80,7 +83,7 @@ func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n i
 			return VariablesConnect{}, n, err
 		}
 		if passwordFlag {
-			payloadDst = payloadDst[ngot:]
+			payloadDst = payloadDst[len(varConn.Username):]
 			varConn.Password, ngot, err = decodeMQTTString(r, payloadDst)
 			n += ngot
 			if err != nil {
@@ -188,17 +191,18 @@ func (d DecoderLowmem) DecodeUnsubscribe(r io.Reader, remainingLength uint32) (v
 // in MQTT fixed headers. This value can range from 1 to 4 bytes in length and
 func decodeRemainingLength(r io.Reader) (value uint32, n int, err error) {
 	multiplier := uint32(1)
-	for i := 0; i < maxRemainingLengthSize; i++ {
+	for i := 0; i < maxRemainingLengthSize && multiplier < 128*128*128; i++ {
 		encodedByte, err := decodeByte(r)
 		if err != nil {
 			return value, n, err
 		}
 		n++
 		value += uint32(encodedByte&127) * multiplier
-		if encodedByte&128 != 0 {
+		if encodedByte&128 == 0 {
 			return value, n, nil
 		}
 		multiplier *= 128
+
 	}
 	return 0, n, errors.New("malformed remaining length")
 }
