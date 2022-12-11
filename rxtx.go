@@ -146,12 +146,11 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 
 	case PacketPuback, PacketPubrec, PacketPubrel, PacketPubcomp, PacketUnsuback:
 		// Only PI, no payload.
-		pi, ngot, err := decodeUint16(rxtx.trp)
+		packetIdentifier, ngot, err = decodeUint16(rxtx.trp)
 		n += ngot
 		if err != nil {
 			break
 		}
-		packetIdentifier = pi
 		fallthrough
 	case PacketDisconnect, PacketPingreq, PacketPingresp:
 		// No payload or variable header.

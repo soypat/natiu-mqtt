@@ -8,21 +8,89 @@ import (
 	"testing"
 )
 
-// Typical packets
-var (
-	varConnackSuccessNoSession = VariablesConnack{
-		AckFlags:   0b0,
-		ReturnCode: 0,
+func FuzzXxx(f *testing.F) {
+	const maxSize = 1500
+	testCases := [][]byte{
+		// Typical connect packet.
+		[]byte("\x10\x1e\x00\x04MQTT\x04\xec\x00<\x00\x020w\x00\x02Bw\x00\x02Aw\x00\x02Cw\x00\x02Dw"),
+		// Typical connack
+		[]byte("\x02\x01\x04"),
+		// A Publish packet
+		[]byte(";\x8e\x01\x00&now-for-something-completely-different\xff\xffertytgbhjjhundsaip;vf[oniw[aondmiksfvoWDNFOEWOPndsafr;poulikujyhtgbfrvdcsxzaesxt dfcgvfhbg kjnlkm/'."),
+		// A subscribe packet.
+		[]byte("\x824\xff\xff\x00\tfavorites\x02\x00\tthe-clash\x02\x00\x0falways-watching\x02\x00\x05k-pop\x02"),
+		// Unsubscribe packet
+		[]byte("\xa2$\xff\xff\x00\x06topic1\x00\x06topic2\x00\x06topic3\x00\bsemperfi"),
+		// Suback packet.
+		[]byte("\x90\b\xff\xff\x00\x01\x00\x02\x80\x01"),
+		// Pubrel packet.
+		[]byte("b\x02\f\xa0"),
 	}
-)
+	testCases = append(testCases, fuzzCorpus...)
+	for _, tc := range testCases {
+		f.Add(tc) // Provide seed corpus.
+	}
 
-const (
-	qos0Flag = PacketFlags(QoS0 << 1)
-	qos1Flag = PacketFlags(QoS1 << 1)
-	qos2Flag = PacketFlags(QoS2 << 1)
-)
+	f.Fuzz(func(t *testing.T, a []byte) {
+		if len(a) == 0 || len(a) > maxSize {
+			return
+		}
+		buf := newLoopbackTransport()
+		_, err := writeFull(buf, a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rxtx, err := NewRxTx(buf, DecoderLowmem{make([]byte, maxSize+10)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rxtx.ReadNextPacket()
+	})
+	_ = testCases
+}
+
+func TestRxTxBadPacketRxErrors(t *testing.T) {
+	rxtx, err := NewRxTx(&testTransport{}, DecoderLowmem{UserBuffer: make([]byte, 1500)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		reason string
+		rx     []byte
+	}{
+		{"no contents", []byte("")},
+		{"EOF during fixed header", []byte("\x01")},
+		{"forbidden packet type 0", []byte("\x00\x00")},
+		{"forbidden packet type 15", []byte("\xf0\x00")},
+		{"missing CONNECT var header and bad remaining length", []byte("\x10\x0a")},
+		{"missing CONNECT var header", []byte("\x10\x00")},
+		{"missing CONNACK var header", []byte("\x20\x00")},
+		{"missing PUBLISH var header", []byte("\x30\x00")},
+		{"missing PUBACK var header", []byte("\x40\x00")},
+		{"missing SUBSCRIBE var header", []byte("\x80\x00")},
+		{"missing SUBACK var header", []byte("\x90\x00")},
+		{"missing UNSUBSCRIBE var header", []byte("\xa0\x00")},
+		{"missing UNSUBACK var header", []byte("\xb0\x00")},
+	} {
+		buf := newLoopbackTransport()
+		rxtx.SetTransport(buf)
+		n, err := buf.Write(test.rx)
+		if err != nil || n != len(test.rx) {
+			t.Fatal("all bytes not written or error:", err)
+		}
+		_, err = rxtx.ReadNextPacket()
+		if err == nil {
+			t.Error("expected error for case:", test.reason)
+		}
+	}
+}
 
 func TestHasPacketIdentifer(t *testing.T) {
+	const (
+		qos0Flag = PacketFlags(QoS0 << 1)
+		qos1Flag = PacketFlags(QoS1 << 1)
+		qos2Flag = PacketFlags(QoS2 << 1)
+	)
 	for _, test := range []struct {
 		h      Header
 		expect bool
@@ -199,6 +267,7 @@ func TestRxTxLoopback(t *testing.T) {
 	if t.Failed() {
 		return // fix first clause before continuing.
 	}
+	buf.rw.Reset()
 	//
 	// Send CONNACK packet over wire.
 	//
@@ -473,14 +542,14 @@ func TestRxTxLoopback(t *testing.T) {
 	}
 }
 
-func newLoopbackTransport() io.ReadWriteCloser {
+func newLoopbackTransport() *testTransport {
 	var _buf bytes.Buffer
 	// buf := bufio.NewReadWriter(bufio.NewReader(&_buf), bufio.NewWriter(&_buf))
 	return &testTransport{&_buf}
 }
 
 type testTransport struct {
-	rw io.ReadWriter
+	rw *bytes.Buffer
 }
 
 func (t *testTransport) Close() error {
@@ -597,4 +666,68 @@ func varEqual(t *testing.T, a, b any) {
 	default:
 		panic(fmt.Sprintf("%T undefined in varEqual", va))
 	}
+}
+
+var fuzzCorpus = [][]byte{
+	[]byte("00\x0000"),
+	[]byte("\x90\xa7000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+	[]byte("\xa2A00\x00\x06000000\x00\x06000000\x00\b00000000\x00\x06000000\x00\x06000000\x00\x06000000\x00\b000000000"),
+	[]byte("\x900000000000000000000"),
+	[]byte("\x100\x00\x0400000\xec00\x00\x0200\x00\x0200\x0000"),
+	[]byte("\x82000"),
+	[]byte("\x900000000000000000"),
+	[]byte("\x90000000000000000000"),
+	[]byte("\x100\x00\x0400000\x8000\x00\x0200\x0000"),
+	[]byte("\x100\x00\xbf00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+	[]byte("\xa000"),
+	[]byte("20\x0000"),
+	[]byte("\x82000\x00\t0000000000\x00\x020000"),
+	[]byte("\x100\x00\x0400000$00\x00\x0200\x0000"),
+	[]byte("00\x0400000000000000000000000000000000000000000000000000000000000000"),
+	[]byte("\x900000"),
+	[]byte("\xa00"),
+	[]byte("0"),
+	[]byte(" 00"),
+	[]byte("0\xfe\xff\xff"),
+	[]byte("a0"),
+	[]byte("A0"),
+	[]byte("\x100\x0200"),
+	[]byte("\x100\x00\x0400000"),
+	[]byte("\x100\x00\x0400000$00\x0000"),
+	[]byte("\x100\x00\x04000000"),
+	[]byte("\xa2 00\x00000000000000000000000000000000000"),
+	[]byte("\xa2000\x00\x06000000\x00\x060000000"),
+	[]byte("00\x00\x000"),
+	[]byte("\x100\x00\x0400000\xec00\x00\x0200\x00\x0200\x00\x0200\x00\x0200\x00"),
+	[]byte("\x82000\x00\x0200000"),
+	[]byte("\x820"),
+	[]byte("\x9000000"),
+	[]byte("0\xee\xff\xff"),
+	[]byte("0\x8e\x01\x00 00000000000000000000000000000000000000000"),
+	[]byte(" 0\x00"),
+	[]byte("0\xff\xc4"),
+	[]byte("\x90\xa700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+	[]byte("\x9000000000000000000000000000000000000"),
+	[]byte("\x82000\x000"),
+	[]byte(" 0"),
+	[]byte("\x100\x00\x0400000B"),
+	[]byte("\x82000\x0000"),
+	[]byte("\x90000"),
+	[]byte("000"),
+	[]byte("0\xff0\x00\t0000000000"),
+	[]byte("\x100\x00\x040000000000"),
+	[]byte("0\xbb0\x0100"),
+	[]byte("\x9000000000000"),
+	[]byte(""),
+	[]byte("\x100\x00\x04000001"),
+	[]byte("\x100\x00\x0400000$00\x05\xe20"),
+	[]byte("b0"),
+	[]byte("\xa2A00\x00\x06000000\x00\x06000000\x00\b00000000\x00\x06000000\x00\x06000000\x00\x06000000\x00\b00000000"),
+	[]byte("\x90B0000000000000000000000000000000000000000000000000000000000000000000"),
+	[]byte("\x100\x00\x0400000000\x0000"),
+	[]byte("\x900"),
+	[]byte("\x90\xa700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+	[]byte("\xa2A00\x00\x06000000\x00\x06000000\x00\b00000000\x00\x06000000\x00\x06000000\x00\x06000000\x00\b00000000\x0000"),
+	[]byte("00\x0400"),
+	[]byte("\x100"),
 }
