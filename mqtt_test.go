@@ -284,7 +284,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		expectHeader := newHeader(PacketSubscribe, flagsPubrelSubUnsub, uint32(varsub.Size()))
+		expectHeader := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varsub.Size()))
 		callbackExecuted := false
 		rxtx.OnSub = func(rt *RxTx, vs VariablesSubscribe) error {
 			if rt.LastReceivedHeader != expectHeader {
@@ -321,7 +321,7 @@ func TestRxTxLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expectHeader := newHeader(PacketUnsubscribe, flagsPubrelSubUnsub, uint32(varunsub.Size()))
+		expectHeader := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varunsub.Size()))
 		rxtx.OnUnsub = func(rt *RxTx, vu VariablesUnsubscribe) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
@@ -377,6 +377,42 @@ func TestRxTxLoopback(t *testing.T) {
 		}
 		if !callbackExecuted {
 			t.Error("OnSuback callback not executed")
+		}
+	}
+
+	//
+	// Send PUBREL packet over wire.
+	//
+	{
+		callbackExecuted := false
+		txPI := uint16(3232)
+		txHeader := newHeader(PacketPubrel, PacketFlagsPubrelSubUnsub, 2)
+		err = rxtx.WriteOther(txHeader, txPI)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rxtx.OnOther = func(rt *RxTx, gotPI uint16) error {
+			if rt.LastReceivedHeader != txHeader {
+				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", txHeader.String(), rt.LastReceivedHeader.String())
+			}
+			if gotPI != txPI {
+				t.Error("mismatch of packet identifiers", gotPI, txPI)
+			}
+			callbackExecuted = true
+			return nil
+		}
+
+		n, err := rxtx.ReadNextPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectSize := txHeader.Size() + 2
+		if n != expectSize {
+			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
+		}
+		if !callbackExecuted {
+			t.Error("OnOther callback not executed")
 		}
 	}
 }

@@ -17,7 +17,8 @@ const (
 )
 
 // Reserved flags for PUBREL, SUBSCRIBE and UNSUBSCRIBE packet types.
-const flagsPubrelSubUnsub PacketFlags = 0b10
+// This is effectively a PUBLISH flag with QoS1 set and no DUP or RETAIN bits.
+const PacketFlagsPubrelSubUnsub PacketFlags = 0b10
 
 // PacketType represents the 4 MSB bits in the first byte in an MQTT fixed header.
 // takes on values 1..14. PacketType and PacketFlags are present in all MQTT packets.

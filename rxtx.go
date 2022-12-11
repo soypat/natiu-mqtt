@@ -224,7 +224,7 @@ func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload
 
 // WriteSubscribe writes an SUBSCRIBE packet over the transport.
 func (rxtx *RxTx) WriteSubscribe(varSub VariablesSubscribe) error {
-	h := newHeader(PacketSubscribe, flagsPubrelSubUnsub, uint32(varSub.Size()))
+	h := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varSub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err
@@ -246,7 +246,7 @@ func (rxtx *RxTx) WriteSuback(varSub VariablesSuback) error {
 
 // WriteUnsubscribe writes an UNSUBSCRIBE packet over the transport.
 func (rxtx *RxTx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
-	h := newHeader(PacketUnsubscribe, flagsPubrelSubUnsub, uint32(varUnsub.Size()))
+	h := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varUnsub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
 		return err

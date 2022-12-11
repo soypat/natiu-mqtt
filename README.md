@@ -1,3 +1,7 @@
+[![Go Report Card](https://goreportcard.com/badge/github.com/soypat/natiu-mqtt)](https://goreportcard.com/report/github.com/soypat/natiu-mqtt)
+[![GoDoc](https://godoc.org/github.com/soypat/natiu-mqtt?status.svg)](https://godoc.org/github.com/soypat/natiu-mqtt)
+[![codecov](https://codecov.io/gh/soypat/natiu-mqtt/branch/main/graph/badge.svg)](https://codecov.io/gh/soypat/natiu-mqtt/branch/main)
+
 # natiu-mqtt
 ### A dead-simple, extensible and correct MQTT implementation.
 
