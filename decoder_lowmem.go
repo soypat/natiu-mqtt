@@ -224,7 +224,7 @@ func readFull(src io.Reader, dst []byte) (int, error) {
 
 // decodeMQTT unmarshals a string from r into buffer's start. The unmarshalled
 // string can be at most len(buffer). buffer must be at least of length 2.
-// decodeMQTTString only returns a non-nil string on a succesfull decode.
+// decodeMQTTString only returns a non-nil string on a successful decode.
 func decodeMQTTString(r io.Reader, buffer []byte) ([]byte, int, error) {
 	if len(buffer) < 2 {
 		return nil, 0, ErrUserBufferFull
