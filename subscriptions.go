@@ -22,12 +22,15 @@ type Subscriptions interface {
 	Unsubscribe(topicFilter string, userBuffer []byte) ([][]byte, error)
 }
 
-var _ Subscriptions = subscriptionsMap{}
+// TODO(soypat): Add AVL tree implementation like the one in github.com/soypat/go-canard, supposedly is best data structure for this [citation needed].
 
-// subscriptionsMap implements Subscriptions interface with a map.
-type subscriptionsMap map[string]struct{}
+var _ Subscriptions = SubscriptionsMap{}
 
-func (sm subscriptionsMap) Subscribe(topic []byte) error {
+// SubscriptionsMap implements Subscriptions interface with a map.
+// It performs allocations.
+type SubscriptionsMap map[string]struct{}
+
+func (sm SubscriptionsMap) Subscribe(topic []byte) error {
 	tp := string(topic)
 	if _, ok := sm[tp]; ok {
 		return errors.New("topic already exists in subscriptions")
@@ -36,15 +39,15 @@ func (sm subscriptionsMap) Subscribe(topic []byte) error {
 	return nil
 }
 
-func (sm subscriptionsMap) Unsubscribe(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
+func (sm SubscriptionsMap) Unsubscribe(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
 	return sm.match(topicFilter, userBuffer, true)
 }
 
-func (sm subscriptionsMap) Match(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
+func (sm SubscriptionsMap) Match(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
 	return sm.match(topicFilter, userBuffer, false)
 }
 
-func (sm subscriptionsMap) match(topicFilter string, userBuffer []byte, deleteMatches bool) (matched [][]byte, err error) {
+func (sm SubscriptionsMap) match(topicFilter string, userBuffer []byte, deleteMatches bool) (matched [][]byte, err error) {
 	n := 0 // Bytes copied into userBuffer.
 	filterParts := strings.Split(topicFilter, "/")
 	if err := validateWildcards(filterParts); err != nil {

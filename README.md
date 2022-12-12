@@ -15,7 +15,7 @@ _Still a WIP._
     * [`RxTx`](./rxtx.go) type lets one build an MQTT implementation from scratch for any transport. No server/client logic defined at this level.
 
 * **No uneeded allocations**: The PUBLISH application message is not handled by this library, the user receives an `io.Reader` with the underlying transport bytes. This prevents allocations on `natiu-mqtt` side.
-* **V3.1.1**: Compliant with [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html)
+* **V3.1.1**: Compliant with [MQTT version 3 rev 1 (3.1)](https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html).
 * **No external dependencies**: Nada. Nope.
 * **Data oriented design**: Minimizes abstractions or objects for the data on the wire.
 * **Fuzz tested, robust**: Decoding implementation fuzzed to prevent adversarial user input from crashing application (95% coverage).
@@ -25,7 +25,7 @@ _Still a WIP._
 This implementation will have a simple embedded-systems implementation in the package
 top level. This implementation will be transport agnostic and non-concurrent. This will make it far easier to modify and reason about. The transport dependent implementations will have their own subpackage, so one package for TCP transport, another for UART, PPP etc.
 
-* Minimal, if any, heap allocations (only using `unsafe` or `tinygo` build tags).
+* Minimal, if any, heap allocations.
 * Support for TCP transport.
 * User owns payload bytes.
 

@@ -13,7 +13,15 @@ type Client struct {
 	ID     string
 	rxtx   RxTx
 	lastRx time.Time
-	Subs   Subscriptions
+}
+
+func NewClient(userBuffer []byte) *Client {
+	if len(userBuffer) < 32 {
+		panic("too small buffer")
+	}
+	return &Client{
+		rxtx: RxTx{userDecoder: DecoderLowmem{userBuffer}},
+	}
 }
 
 func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err error) {
@@ -25,6 +33,7 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 	if err != nil {
 		return VariablesConnack{}, err
 	}
+	previousCallback := c.rxtx.OnConnack
 	c.rxtx.OnConnack = func(rt *RxTx, vc VariablesConnack) error {
 		if vc.ReturnCode != 0 {
 			return errors.New(vc.ReturnCode.String())
@@ -33,7 +42,7 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 		vconnack = vc
 		return nil
 	}
-	defer func() { c.rxtx.OnConnack = nil }() // reset callback on exit.
+	defer func() { c.rxtx.OnConnack = previousCallback }() // reset callback on exit.
 
 	_, err = c.rxtx.ReadNextPacket()
 	if err == nil && c.rxtx.LastReceivedHeader.Type() != PacketConnack {
@@ -46,7 +55,6 @@ func (c *Client) Disconnect() error {
 	if !c.lastRx.IsZero() {
 		return errors.New("not connected")
 	}
-
 	err := c.rxtx.WriteOther(newHeader(PacketDisconnect, PacketFlagsPubrelSubUnsub, 0), 0)
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		err = nil              //if EOF or network closed simply exit.
@@ -59,17 +67,18 @@ func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err
 	if err := vsub.Validate(); err != nil {
 		return VariablesSuback{}, err
 	}
-
 	err = c.rxtx.WriteSubscribe(vsub)
 	if err != nil {
 		return VariablesSuback{}, err
 	}
+	previousCallback := c.rxtx.OnSuback
 	c.rxtx.OnSuback = func(rt *RxTx, vs VariablesSuback) error {
 		c.lastRx = time.Now()
 		suback = vs
+		// if previousCallback !
 		return nil
 	}
-	defer func() { c.rxtx.OnSuback = nil }() // reset callback on exit.
+	defer func() { c.rxtx.OnSuback = previousCallback }() // reset callback on exit.
 
 	_, err = c.rxtx.ReadNextPacket()
 	if err == nil && c.rxtx.LastReceivedHeader.Type() != PacketSuback {
@@ -92,4 +101,28 @@ func (c *Client) PublishPayload(hdr Header, vp VariablesPublish, payload []byte)
 // failed/closed connections on [RxTx] side and resuming communication with server.
 func (c *Client) SetTransport(transport io.ReadWriteCloser) {
 	c.rxtx.SetTransport(transport)
+}
+
+func (c *Client) Ping() error {
+	err := c.rxtx.WriteOther(newHeader(PacketPingreq, 0, 0), 0)
+	if err != nil {
+		return err
+	}
+	_, err = c.rxtx.ReadNextPacket()
+	if err != nil {
+		return err
+	}
+	if c.rxtx.LastReceivedHeader.Type() != PacketPingresp {
+		return errors.New("expected PINGRESP response for PINGREQ")
+	}
+	return nil
+}
+
+// RxTx returns a new RxTx that wraps the transport layer.
+// The returned RxTx uses the client's Decoder as is.
+func (c *Client) RxTx() *RxTx {
+	return &RxTx{
+		trp:         c.rxtx.trp,
+		userDecoder: c.rxtx.userDecoder,
+	}
 }

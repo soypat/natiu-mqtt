@@ -38,8 +38,13 @@ func encodeMQTTString(w io.Writer, s []byte) (int, error) {
 
 // encodeRemainingLength encodes between 1 to 4 bytes.
 func encodeRemainingLength(remlen uint32, b []byte) (n int) {
-	if remlen == 0 || remlen > maxRemainingLengthValue {
-		panic("remaining length zero or too large")
+	if remlen > maxRemainingLengthValue {
+		panic("remaining length too large. " + bugReportLink)
+	}
+	if remlen < 128 {
+		// Fast path for small remaining lengths. Also the implementation below is not correct for remaining length = 0.
+		b[0] = byte(remlen)
+		return 1
 	}
 	for n = 0; remlen > 0 && n < maxRemainingLengthSize; n++ {
 		encoded := byte(remlen % 128)

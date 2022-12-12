@@ -3,6 +3,7 @@ package mqtt
 import (
 	"errors"
 	"io"
+	"strconv"
 )
 
 // Decoder provides an abstraction for an MQTT variable header decoding implementation.
@@ -179,7 +180,7 @@ func (h Header) Type() PacketType { return PacketType(h.firstByte >> 4) }
 
 // String returns a pretty-string representation of h. Allocates memory.
 func (h Header) String() string {
-	return h.Type().String() + " " + h.Flags().String()
+	return h.Type().String() + " " + h.Flags().String() + " remlen: 0x" + strconv.FormatUint(uint64(h.RemainingLength), 16)
 }
 
 // PacketType lists in definitions.go

@@ -37,6 +37,8 @@ func ExampleRxTx() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Output:
+	// EOF
 }
 
 func TestHeaderLoopback(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func FuzzXxx(f *testing.F) {
+func FuzzRxTxReadNextPacket(f *testing.F) {
 	const maxSize = 1500
 	testCases := [][]byte{
 		// Typical connect packet.
@@ -183,6 +183,8 @@ func TestHeaderSize(t *testing.T) {
 		h      Header
 		expect int
 	}{
+		{h: newHeader(1, 0, 0), expect: 2},
+		{h: newHeader(1, 0, 1), expect: 2},
 		{h: newHeader(1, 0, 2), expect: 2},
 		{h: newHeader(1, 0, 128), expect: 3},
 		{h: newHeader(1, 0, 0xffff), expect: 4},
@@ -192,6 +194,38 @@ func TestHeaderSize(t *testing.T) {
 		got := test.h.Size()
 		if got != test.expect {
 			t.Error("size mismatch for remlen:", test.h.RemainingLength, got, test.expect)
+		}
+	}
+}
+
+func TestHeaderEncodeDecodeLoopback(t *testing.T) {
+	var b bytes.Buffer
+	for _, test := range []struct {
+		h      Header
+		expect int
+	}{
+		{h: newHeader(1, 0, 0), expect: 2},
+		{h: newHeader(1, 0, 1), expect: 2},
+		{h: newHeader(1, 0, 2), expect: 2},
+		{h: newHeader(1, 0, 128), expect: 3},
+		{h: newHeader(1, 0, 0xffff), expect: 4},
+		{h: newHeader(1, 0, 0xffff_ff), expect: 5},
+		{h: newHeader(1, 0, 0xffff_ffff), expect: 0}, // bad remaining length
+	} {
+		hdr := test.h
+		nencode, err := hdr.Encode(&b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotHdr, ndecode, err := DecodeHeader(&b)
+		if err != nil {
+			t.Fatalf("decoded %d byte for %+v: %v", ndecode, hdr, err)
+		}
+		if nencode != ndecode {
+			t.Errorf("number of bytes encoded (%d) not match decoded (%d)", nencode, ndecode)
+		}
+		if hdr != gotHdr {
+			t.Errorf("header mismatch in values encode:%+v; decode:%+v", hdr, gotHdr)
 		}
 	}
 }
@@ -273,8 +307,8 @@ func TestRxTxLoopback(t *testing.T) {
 	//
 	{
 		varConnck := VariablesConnack{
-			AckFlags:   1,                            //SP set
-			ReturnCode: ReturnCodeBadUserCredentials, // Bad User credentials
+			AckFlags:   1,                      // SP set
+			ReturnCode: ReturnCodeConnAccepted, // Accepted since SP set.
 		}
 		t.Log("loopback connack:", varConnck.String())
 		err = rxtx.WriteConnack(varConnck)
@@ -529,6 +563,41 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectSize := txHeader.Size() + 2
+		if n != expectSize {
+			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
+		}
+		if !callbackExecuted {
+			t.Error("OnOther callback not executed")
+		}
+	}
+
+	//
+	// Send PINGREQ packet over wire.
+	//
+	{
+		callbackExecuted := false
+		txHeader := newHeader(PacketPingreq, 0, 0)
+		err = rxtx.WriteOther(txHeader, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rxtx.OnOther = func(rt *RxTx, gotPI uint16) error {
+			if rt.LastReceivedHeader != txHeader {
+				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", txHeader.String(), rt.LastReceivedHeader.String())
+			}
+			if gotPI != 0 {
+				t.Error("mismatch of packet identifiers", gotPI, 0)
+			}
+			callbackExecuted = true
+			return nil
+		}
+
+		n, err := rxtx.ReadNextPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectSize := txHeader.Size()
 		if n != expectSize {
 			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
 		}

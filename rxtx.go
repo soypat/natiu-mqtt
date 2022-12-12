@@ -75,6 +75,9 @@ func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
 // ReadNextPacket reads the next packet in the transport. If it fails it closes the transport
 // and the underlying transport must be reset.
 func (rxtx *RxTx) ReadNextPacket() (int, error) {
+	if rxtx.trp == nil {
+		return 0, errors.New("nil transport")
+	}
 	hdr, n, err := DecodeHeader(rxtx.trp)
 	if err != nil {
 		rxtx.prepClose(err)
@@ -202,6 +205,9 @@ func (rxtx *RxTx) exhaustReader(r io.Reader) (err error) {
 
 // WriteConnack writes a CONNECT packet over the transport.
 func (rxtx *RxTx) WriteConnect(varConn *VariablesConnect) error {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	h := newHeader(PacketConnect, 0, uint32(varConn.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
@@ -217,6 +223,9 @@ func (rxtx *RxTx) WriteConnect(varConn *VariablesConnect) error {
 
 // WriteConnack writes a CONNACK packet over the transport.
 func (rxtx *RxTx) WriteConnack(varConnack VariablesConnack) error {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	h := newHeader(PacketConnack, 0, uint32(varConnack.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
@@ -233,6 +242,9 @@ func (rxtx *RxTx) WriteConnack(varConnack VariablesConnack) error {
 // WritePublishPayload writes a PUBLISH packet over the transport along with the
 // Application Message in the payload. payload can be zero-length.
 func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload []byte) error {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	h.RemainingLength = uint32(varPub.Size() + len(payload))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
@@ -253,6 +265,9 @@ func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload
 
 // WriteSubscribe writes an SUBSCRIBE packet over the transport.
 func (rxtx *RxTx) WriteSubscribe(varSub VariablesSubscribe) error {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	h := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varSub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
@@ -268,6 +283,9 @@ func (rxtx *RxTx) WriteSubscribe(varSub VariablesSubscribe) error {
 
 // WriteSuback writes an UNSUBACK packet over the transport.
 func (rxtx *RxTx) WriteSuback(varSub VariablesSuback) error {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	if err := varSub.Validate(); err != nil {
 		return err
 	}
@@ -286,6 +304,9 @@ func (rxtx *RxTx) WriteSuback(varSub VariablesSuback) error {
 
 // WriteUnsubscribe writes an UNSUBSCRIBE packet over the transport.
 func (rxtx *RxTx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	h := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varUnsub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
@@ -302,6 +323,9 @@ func (rxtx *RxTx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
 // WriteOther writes PUBACK, PUBREC, PUBREL, PUBCOMP, UNSUBACK packets containing non-zero packet identfiers
 // and DISCONNECT, PINGREQ, PINGRESP packets with no packet identifier. It automatically sets the RemainingLength field.
 func (rxtx *RxTx) WriteOther(h Header, packetIdentifier uint16) (err error) {
+	if rxtx.trp == nil {
+		return errors.New("nil transport")
+	}
 	hasPI := h.HasPacketIdentifier()
 	if hasPI {
 		h.RemainingLength = 2
