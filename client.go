@@ -19,9 +19,7 @@ func NewClient(userBuffer []byte) *Client {
 	if len(userBuffer) < 32 {
 		panic("too small buffer")
 	}
-	return &Client{
-		rxtx: RxTx{userDecoder: DecoderLowmem{userBuffer}},
-	}
+	return nil
 }
 
 func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err error) {
@@ -34,7 +32,7 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 		return VariablesConnack{}, err
 	}
 	previousCallback := c.rxtx.OnConnack
-	c.rxtx.OnConnack = func(rt *RxTx, vc VariablesConnack) error {
+	c.rxtx.OnConnack = func(rt *Rx, vc VariablesConnack) error {
 		if vc.ReturnCode != 0 {
 			return errors.New(vc.ReturnCode.String())
 		}
@@ -72,7 +70,7 @@ func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err
 		return VariablesSuback{}, err
 	}
 	previousCallback := c.rxtx.OnSuback
-	c.rxtx.OnSuback = func(rt *RxTx, vs VariablesSuback) error {
+	c.rxtx.OnSuback = func(rt *Rx, vs VariablesSuback) error {
 		c.lastRx = time.Now()
 		suback = vs
 		// if previousCallback !
@@ -103,6 +101,8 @@ func (c *Client) SetTransport(transport io.ReadWriteCloser) {
 	c.rxtx.SetTransport(transport)
 }
 
+// Ping writes a PINGREQ packet over the network and blocks until a packet is received.
+// If an error is encountered during decoding or if the received packet is not a PINGRESP then an error is returned
 func (c *Client) Ping() error {
 	err := c.rxtx.WriteOther(newHeader(PacketPingreq, 0, 0), 0)
 	if err != nil {
@@ -122,7 +122,7 @@ func (c *Client) Ping() error {
 // The returned RxTx uses the client's Decoder as is.
 func (c *Client) RxTx() *RxTx {
 	return &RxTx{
-		trp:         c.rxtx.trp,
-		userDecoder: c.rxtx.userDecoder,
+		Tx: Tx{txTrp: c.rxtx.txTrp},
+		Rx: Rx{rxTrp: c.rxtx.Rx.rxTrp, userDecoder: c.rxtx.Rx.userDecoder},
 	}
 }

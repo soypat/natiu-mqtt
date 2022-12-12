@@ -191,7 +191,7 @@ func (d DecoderLowmem) DecodeUnsubscribe(r io.Reader, remainingLength uint32) (v
 // in MQTT fixed headers. This value can range from 1 to 4 bytes in length and
 func decodeRemainingLength(r io.Reader) (value uint32, n int, err error) {
 	multiplier := uint32(1)
-	for i := 0; i < maxRemainingLengthSize && multiplier < 128*128*128; i++ {
+	for i := 0; i < maxRemainingLengthSize && multiplier <= 128*128*128; i++ {
 		encodedByte, err := decodeByte(r)
 		if err != nil {
 			return value, n, err

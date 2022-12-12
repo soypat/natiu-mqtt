@@ -18,7 +18,7 @@ func ExampleRxTx() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rxtx.OnConnack = func(rt *mqtt.RxTx, vc mqtt.VariablesConnack) error {
+	rxtx.OnConnack = func(rt *mqtt.Rx, vc mqtt.VariablesConnack) error {
 		log.Printf("%v received, SP=%v, rc=%v", rt.LastReceivedHeader.String(), vc.SessionPresent(), vc.ReturnCode.String())
 		return nil
 	}
@@ -37,8 +37,9 @@ func ExampleRxTx() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// TODO(soypat): Build a server-client example.
 	// Output:
-	// EOF
+	// 2022/12/12 18:07:18 dial tcp 127.0.0.1:1883: connect: connection refused
 }
 
 func TestHeaderLoopback(t *testing.T) {

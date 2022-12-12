@@ -204,16 +204,22 @@ func TestHeaderEncodeDecodeLoopback(t *testing.T) {
 		h      Header
 		expect int
 	}{
+		{h: newHeader(1, 0, maxRemainingLengthValue), expect: 5},   // TODO(soypat): must support up to maxRemainingLengthValue remaining length.
+		{h: newHeader(1, 0, maxRemainingLengthValue+1), expect: 0}, // bad remaining length
 		{h: newHeader(1, 0, 0), expect: 2},
 		{h: newHeader(1, 0, 1), expect: 2},
 		{h: newHeader(1, 0, 2), expect: 2},
 		{h: newHeader(1, 0, 128), expect: 3},
 		{h: newHeader(1, 0, 0xffff), expect: 4},
-		{h: newHeader(1, 0, 0xffff_ff), expect: 5},
-		{h: newHeader(1, 0, 0xffff_ffff), expect: 0}, // bad remaining length
 	} {
 		hdr := test.h
 		nencode, err := hdr.Encode(&b)
+		if hdr.RemainingLength > maxRemainingLengthValue {
+			if err == nil {
+				t.Error("expected error for malformed packet")
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -223,6 +229,9 @@ func TestHeaderEncodeDecodeLoopback(t *testing.T) {
 		}
 		if nencode != ndecode {
 			t.Errorf("number of bytes encoded (%d) not match decoded (%d)", nencode, ndecode)
+		}
+		if nencode != test.expect {
+			t.Errorf("expected to encode %d bytes, encoded %d: %s", test.expect, nencode, hdr)
 		}
 		if hdr != gotHdr {
 			t.Errorf("header mismatch in values encode:%+v; decode:%+v", hdr, gotHdr)
@@ -277,7 +286,7 @@ func TestRxTxLoopback(t *testing.T) {
 		}
 		// We now prepare to receive CONNECT packet on other side.
 		callbackExecuted := false
-		rxtx.OnConnect = func(rt *RxTx, vc *VariablesConnect) error {
+		rxtx.OnConnect = func(rt *Rx, vc *VariablesConnect) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -317,7 +326,7 @@ func TestRxTxLoopback(t *testing.T) {
 		}
 		expectHeader := newHeader(PacketConnack, 0, uint32(varConnck.Size()))
 		callbackExecuted := false
-		rxtx.OnConnack = func(rt *RxTx, vc VariablesConnack) error {
+		rxtx.OnConnack = func(rt *Rx, vc VariablesConnack) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -359,7 +368,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		callbackExecuted := false
-		rxtx.OnPub = func(rt *RxTx, vp VariablesPublish, r io.Reader) error {
+		rxtx.OnPub = func(rt *Rx, vp VariablesPublish, r io.Reader) error {
 			b, err := io.ReadAll(r)
 			if err != nil {
 				t.Fatal(err)
@@ -441,7 +450,7 @@ func TestRxTxLoopback(t *testing.T) {
 
 		expectHeader := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varsub.Size()))
 		callbackExecuted := false
-		rxtx.OnSub = func(rt *RxTx, vs VariablesSubscribe) error {
+		rxtx.OnSub = func(rt *Rx, vs VariablesSubscribe) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -477,7 +486,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectHeader := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varunsub.Size()))
-		rxtx.OnUnsub = func(rt *RxTx, vu VariablesUnsubscribe) error {
+		rxtx.OnUnsub = func(rt *Rx, vu VariablesUnsubscribe) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -513,7 +522,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectHeader := newHeader(PacketSuback, 0, uint32(varSuback.Size()))
-		rxtx.OnSuback = func(rt *RxTx, vu VariablesSuback) error {
+		rxtx.OnSuback = func(rt *Rx, vu VariablesSuback) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -547,7 +556,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		rxtx.OnOther = func(rt *RxTx, gotPI uint16) error {
+		rxtx.OnOther = func(rt *Rx, gotPI uint16) error {
 			if rt.LastReceivedHeader != txHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", txHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -582,7 +591,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		rxtx.OnOther = func(rt *RxTx, gotPI uint16) error {
+		rxtx.OnOther = func(rt *Rx, gotPI uint16) error {
 			if rt.LastReceivedHeader != txHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", txHeader.String(), rt.LastReceivedHeader.String())
 			}

@@ -143,8 +143,10 @@ func NewHeader(packetType PacketType, packetFlags PacketFlags, remainingLen uint
 	return h, nil
 }
 
+// newHeader returns a header with the argument type, flags and remaining length.
+// For internal use. This function performs no validation whatsoever.
 func newHeader(pt PacketType, pf PacketFlags, rlen uint32) Header {
-	return Header{ // Creates a header with no error checking. For internal use.
+	return Header{
 		firstByte:       byte(pt)<<4 | byte(pf),
 		RemainingLength: rlen,
 	}
@@ -205,6 +207,11 @@ func (p PacketType) String() string {
 	}
 	var s string
 	switch p {
+	// First two cases are reserved packets according to MQTT v3.1.1.
+	case 15:
+		s = "RESERVED(15)"
+	case 0:
+		s = "RESERVED(0)"
 	case PacketConnect:
 		s = "CONNECT"
 	case PacketConnack:
@@ -234,7 +241,7 @@ func (p PacketType) String() string {
 	case PacketDisconnect:
 		s = "DISCONNECT"
 	default:
-		s = "forbidden/reserved packet type"
+		panic("unreachable") // Caught during fuzzing lets hope.
 	}
 	return s
 }

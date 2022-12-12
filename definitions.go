@@ -14,8 +14,8 @@ const (
 	defaultProtocol = "MQTT"
 	// Size on wire after being encoded.
 	maxRemainingLengthSize = 4
-	// Max value Remaining Length can take 0xffff_ff7f.
-	maxRemainingLengthValue = 0xffff_ff7f
+	// Max value Remaining Length can take 0xfff_ffff. When encoded over the wire this value yields 0xffff_ff7f.
+	maxRemainingLengthValue = 0xfff_ffff
 )
 
 // Reserved flags for PUBREL, SUBSCRIBE and UNSUBSCRIBE packet types.
