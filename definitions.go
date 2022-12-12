@@ -8,11 +8,13 @@ If you are new to MQTT start by reading definitions.go.
 package mqtt
 
 const (
-	defaultProtocolLevel    = 4
-	defaultProtocol         = "MQTT"
-	maxMessageHandlers      = 10
-	defaultBufferLen        = 1500
-	maxRemainingLengthSize  = 4
+	// Accepted protocol level as per MQTT v3.1.1. This goes in the CONNECT variable header.
+	defaultProtocolLevel = 4
+	// Accepted protocol as per MQTT v3.1.1. This goes in the CONNECT variable header.
+	defaultProtocol = "MQTT"
+	// Size on wire after being encoded.
+	maxRemainingLengthSize = 4
+	// Max value Remaining Length can take 0xffff_ff7f.
 	maxRemainingLengthValue = 0xffff_ff7f
 )
 
@@ -116,3 +118,16 @@ const (
 	ReturnCodeUnauthorized
 	minInvalidReturnCode
 )
+
+type wrapErr struct {
+	msg    string
+	suberr []error
+}
+
+func (w *wrapErr) Error() string {
+	return w.msg + " (wraps various errors)"
+}
+
+func (w *wrapErr) Unwrap() []error {
+	return w.suberr
+}

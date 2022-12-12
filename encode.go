@@ -173,7 +173,7 @@ func encodeSuback(w io.Writer, varSuback VariablesSuback) (n int, err error) {
 		return n, err
 	}
 	for _, qos := range varSuback.ReturnCodes {
-		if !qos.IsValid() {
+		if !qos.IsValid() && qos != QoSSubfail { // Suback can encode a subfail.
 			panic("encodeSuback received an invalid QoS return code. " + bugReportLink)
 		}
 		ngot, err := encodeByte(w, byte(qos))

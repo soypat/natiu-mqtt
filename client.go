@@ -61,7 +61,9 @@ func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err
 	}
 
 	err = c.rxtx.WriteSubscribe(vsub)
-
+	if err != nil {
+		return VariablesSuback{}, err
+	}
 	c.rxtx.OnSuback = func(rt *RxTx, vs VariablesSuback) error {
 		c.lastRx = time.Now()
 		suback = vs
@@ -74,4 +76,20 @@ func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err
 		return VariablesSuback{}, errors.New("expected SUBACK response to SUBSCRIBE packet")
 	}
 	return suback, err
+}
+
+func (c *Client) PublishPayload(hdr Header, vp VariablesPublish, payload []byte) error {
+	if err := vp.Validate(); err != nil {
+		return err
+	}
+	if hdr.Flags().QoS() != QoS0 {
+		return errors.New("only support QoS0")
+	}
+	return c.rxtx.WritePublishPayload(hdr, vp, payload)
+}
+
+// SetTransport sets the underlying transport. This allows users to re-open
+// failed/closed connections on [RxTx] side and resuming communication with server.
+func (c *Client) SetTransport(transport io.ReadWriteCloser) {
+	c.rxtx.SetTransport(transport)
 }

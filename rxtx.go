@@ -6,6 +6,11 @@ import (
 )
 
 // RxTx implements a bare minimum MQTT protocol transport layer handler.
+// If there is an error during read/write of a packet the transport is closed
+// and a new transport must be set with [RxTx.SetTransport].
+// An RxTx will not validate data before encoding, that is up to the caller, it
+// will validate incoming data according to MQTT's specification. Malformed packets
+// will be rejected and the connection will be closed immediately with a call to [RxTx.OnError].
 type RxTx struct {
 	// LastReceivedHeader contains the last correctly read header.
 	LastReceivedHeader Header
@@ -21,6 +26,9 @@ type RxTx struct {
 	OnSub    func(*RxTx, VariablesSubscribe) error
 	OnSuback func(*RxTx, VariablesSuback) error
 	OnUnsub  func(*RxTx, VariablesUnsubscribe) error
+	// OnError is called if an error is encountered during encoding or decoding of packet.
+	OnError func(error)
+
 	// Transport over which packets are read and written to.
 	// Not exported since RxTx type might be composed of embedded Rx and Tx types in future. TBD.
 	trp io.ReadWriteCloser
@@ -49,6 +57,15 @@ func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
 
 // Close closes the underlying transport.
 func (rxtx *RxTx) Close() error { return rxtx.trp.Close() }
+func (rxtx *RxTx) prepClose(err error) {
+	if rxtx.OnError != nil {
+		rxtx.OnError(err)
+	}
+	err = rxtx.Close()
+	if rxtx.OnError != nil {
+		rxtx.OnError(err)
+	}
+}
 
 // SetTransport sets the rxtx's reader and writer.
 func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
@@ -60,7 +77,7 @@ func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
 func (rxtx *RxTx) ReadNextPacket() (int, error) {
 	hdr, n, err := DecodeHeader(rxtx.trp)
 	if err != nil {
-		rxtx.Close()
+		rxtx.prepClose(err)
 		return n, err
 	}
 	rxtx.LastReceivedHeader = hdr
@@ -159,13 +176,13 @@ func (rxtx *RxTx) ReadNextPacket() (int, error) {
 		}
 
 	default:
-		// Header Decode should return an error on incorrect package type receive.
+		// Header Decode should return an error on incorrect packet type receive.
 		// This could be tested via fuzzing.
 		panic("unreachable")
 	}
 
 	if err != nil {
-		rxtx.Close()
+		rxtx.prepClose(err)
 	}
 	return n, err
 }
@@ -188,9 +205,13 @@ func (rxtx *RxTx) WriteConnect(varConn *VariablesConnect) error {
 	h := newHeader(PacketConnect, 0, uint32(varConn.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = encodeConnect(rxtx.trp, varConn)
+	if err != nil {
+		rxtx.prepClose(err)
+	}
 	return err
 }
 
@@ -199,9 +220,13 @@ func (rxtx *RxTx) WriteConnack(varConnack VariablesConnack) error {
 	h := newHeader(PacketConnack, 0, uint32(varConnack.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = encodeConnack(rxtx.trp, varConnack)
+	if err != nil {
+		rxtx.prepClose(err)
+	}
 	return err
 }
 
@@ -211,13 +236,18 @@ func (rxtx *RxTx) WritePublishPayload(h Header, varPub VariablesPublish, payload
 	h.RemainingLength = uint32(varPub.Size() + len(payload))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = encodePublish(rxtx.trp, varPub)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = writeFull(rxtx.trp, payload)
+	if err != nil {
+		rxtx.prepClose(err)
+	}
 	return err
 }
 
@@ -226,20 +256,31 @@ func (rxtx *RxTx) WriteSubscribe(varSub VariablesSubscribe) error {
 	h := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varSub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = encodeSubscribe(rxtx.trp, varSub)
+	if err != nil {
+		rxtx.prepClose(err)
+	}
 	return err
 }
 
 // WriteSuback writes an UNSUBACK packet over the transport.
 func (rxtx *RxTx) WriteSuback(varSub VariablesSuback) error {
+	if err := varSub.Validate(); err != nil {
+		return err
+	}
 	h := newHeader(PacketSuback, 0, uint32(varSub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = encodeSuback(rxtx.trp, varSub)
+	if err != nil {
+		rxtx.prepClose(err)
+	}
 	return err
 }
 
@@ -248,9 +289,13 @@ func (rxtx *RxTx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
 	h := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varUnsub.Size()))
 	_, err := h.Encode(rxtx.trp)
 	if err != nil {
+		rxtx.prepClose(err)
 		return err
 	}
 	_, err = encodeUnsubscribe(rxtx.trp, varUnsub)
+	if err != nil {
+		rxtx.prepClose(err)
+	}
 	return err
 }
 
@@ -262,12 +307,16 @@ func (rxtx *RxTx) WriteOther(h Header, packetIdentifier uint16) (err error) {
 		h.RemainingLength = 2
 		_, err = h.Encode(rxtx.trp)
 		if err != nil {
+			rxtx.prepClose(err)
 			return err
 		}
 		_, err = encodeUint16(rxtx.trp, packetIdentifier)
 	} else {
 		h.RemainingLength = 0
 		_, err = h.Encode(rxtx.trp)
+	}
+	if err != nil {
+		rxtx.prepClose(err)
 	}
 	return err
 }
