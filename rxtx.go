@@ -82,12 +82,12 @@ func (rx *Rx) SetRxTransport(transport io.ReadCloser) {
 }
 
 // Close closes the underlying transport.
-func (rx *Rx) Close() error { return rx.rxTrp.Close() }
+func (rx *Rx) CloseRx() error { return rx.rxTrp.Close() }
 func (rx *Rx) rxErrHandler(err error) {
 	if rx.OnRxError != nil {
 		rx.OnRxError(rx, err)
 	} else {
-		rx.Close()
+		rx.CloseRx()
 	}
 }
 
@@ -435,9 +435,11 @@ func (tx *Tx) WriteSimple(packetType PacketType) (err error) {
 	return err
 }
 
+// Close closes the underlying tranport and returns an error if any.
+func (tx *Tx) CloseTx() error { return tx.txTrp.Close() }
+
 func (tx *Tx) prepClose(err error) {
-	hasOnErr := tx.OnTxError != nil
-	if hasOnErr {
+	if tx.OnTxError != nil {
 		tx.OnTxError(tx, err)
 	} else {
 		tx.txTrp.Close()

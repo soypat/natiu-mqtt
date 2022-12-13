@@ -614,7 +614,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Error("OnOther callback not executed")
 		}
 	}
-	err = rxtx.Close()
+	err = rxtx.CloseRx() // closes both.
 	if err != nil {
 		t.Error(err)
 	}
