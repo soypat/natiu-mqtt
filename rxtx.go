@@ -55,7 +55,7 @@ type Rx struct {
 	// User defined decoder for allocating packets.
 	userDecoder Decoder
 	// Default decoder for non allocating packets.
-	dec        DecoderLowmem
+	dec        DecoderNoAlloc
 	ScratchBuf []byte
 }
 

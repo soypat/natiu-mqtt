@@ -16,11 +16,8 @@ type Client struct {
 	lastRx time.Time
 }
 
-func NewClient(userBuffer []byte) *Client {
-	if len(userBuffer) < 32 {
-		panic("too small buffer")
-	}
-	return nil
+func NewClient(decoder Decoder) *Client {
+	return &Client{rxtx: RxTx{Rx: Rx{userDecoder: decoder}}}
 }
 
 // Connect sends a CONNECT packet over the transport. This is the first packet expected by a server.

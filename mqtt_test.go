@@ -40,7 +40,7 @@ func FuzzRxTxReadNextPacket(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rxtx, err := NewRxTx(buf, DecoderLowmem{make([]byte, maxSize+10)})
+		rxtx, err := NewRxTx(buf, DecoderNoAlloc{make([]byte, maxSize+10)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +84,7 @@ func TestHeaderLoopback(t *testing.T) {
 }
 
 func TestRxTxBadPacketRxErrors(t *testing.T) {
-	rxtx, err := NewRxTx(&testTransport{}, DecoderLowmem{UserBuffer: make([]byte, 1500)})
+	rxtx, err := NewRxTx(&testTransport{}, DecoderNoAlloc{UserBuffer: make([]byte, 1500)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestVariablesConnectSize(t *testing.T) {
 func TestRxTxLoopback(t *testing.T) {
 	// This test starts with a long running
 	buf := newLoopbackTransport()
-	rxtx, err := NewRxTx(buf, DecoderLowmem{make([]byte, 1500)})
+	rxtx, err := NewRxTx(buf, DecoderNoAlloc{make([]byte, 1500)})
 	if err != nil {
 		t.Fatal(err)
 	}

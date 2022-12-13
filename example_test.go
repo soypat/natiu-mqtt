@@ -1,6 +1,7 @@
 package mqtt_test
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"time"
@@ -9,18 +10,18 @@ import (
 )
 
 func ExampleClient() {
+	// Create new client.
+	client := mqtt.NewClient(mqtt.DecoderNoAlloc{make([]byte, 1500)})
+	client.ID = "salamanca"
+
 	// Get a transport for MQTT packets.
 	const defaultMQTTPort = ":1883"
 	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
-
-	// Create new client.
-	client := mqtt.NewClient(make([]byte, 1500))
 	client.SetTransport(conn)
-	client.ID = "salamanca"
-
 	// Prepare for CONNECT interaction with server.
 	var varConn mqtt.VariablesConnect
 	varConn.SetDefaultMQTT(nil)              // Client automatically sets ClientID so no need to set here.
@@ -35,7 +36,8 @@ func ExampleClient() {
 		log.Println("Ping success")
 		time.Sleep(time.Second)
 	}
-	log.Fatalln("ping failed:", pingErr)
+	// Output:
+	// dial tcp 127.0.0.1:1883: connect: connection refused
 }
 
 func ExampleRxTx() {
@@ -44,7 +46,7 @@ func ExampleRxTx() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rxtx, err := mqtt.NewRxTx(conn, mqtt.DecoderLowmem{UserBuffer: make([]byte, 1500)})
+	rxtx, err := mqtt.NewRxTx(conn, mqtt.DecoderNoAlloc{UserBuffer: make([]byte, 1500)})
 	if err != nil {
 		log.Fatal(err)
 	}

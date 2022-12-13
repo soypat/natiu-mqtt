@@ -6,18 +6,18 @@ import (
 	"io"
 )
 
-// DecoderLowmem implements the [Decoder] interface for unmarshalling Variable headers
+// DecoderNoAlloc implements the [Decoder] interface for unmarshalling Variable headers
 // of MQTT packets. This particular implementation avoids heap allocations to ensure
 // minimal memory usage during decoding. The UserBuffer is used up to it's length.
 // Decode Calls that receive strings invalidate strings decoded in previous calls.
 // Needless to say, this implementation is NOT safe for concurrent use.
 // Calls that allocate strings or bytes are contained in the [Decoder] interface.
-type DecoderLowmem struct {
+type DecoderNoAlloc struct {
 	UserBuffer []byte
 }
 
 // DecodeConnect implements [Decoder] interface.
-func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n int, err error) {
+func (d DecoderNoAlloc) DecodeConnect(r io.Reader) (varConn VariablesConnect, n int, err error) {
 	payloadDst := d.UserBuffer
 	var ngot int
 	varConn.Protocol, n, err = decodeMQTTString(r, payloadDst)
@@ -96,7 +96,7 @@ func (d DecoderLowmem) DecodeConnect(r io.Reader) (varConn VariablesConnect, n i
 
 // DecodeConnack implements [Decoder] interface. It is the responsibility of the caller
 // to handle a non-zero [ConnectReturnCode].
-func (d DecoderLowmem) DecodeConnack(r io.Reader) (VariablesConnack, int, error) {
+func (d DecoderNoAlloc) DecodeConnack(r io.Reader) (VariablesConnack, int, error) {
 	var buf [2]byte
 	n, err := readFull(r, buf[:])
 	if err != nil {
@@ -110,7 +110,7 @@ func (d DecoderLowmem) DecodeConnack(r io.Reader) (VariablesConnack, int, error)
 }
 
 // DecodePublish implements [Decoder] interface.
-func (d DecoderLowmem) DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error) {
+func (d DecoderNoAlloc) DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error) {
 	topic, n, err := decodeMQTTString(r, d.UserBuffer)
 	if err != nil {
 		return VariablesPublish{}, n, err
@@ -128,7 +128,7 @@ func (d DecoderLowmem) DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublis
 }
 
 // DecodeSubscribe implements [Decoder] interface.
-func (d DecoderLowmem) DecodeSubscribe(r io.Reader, remainingLen uint32) (varSub VariablesSubscribe, n int, err error) {
+func (d DecoderNoAlloc) DecodeSubscribe(r io.Reader, remainingLen uint32) (varSub VariablesSubscribe, n int, err error) {
 	payloadDst := d.UserBuffer
 	varSub.PacketIdentifier, n, err = decodeUint16(r)
 	if err != nil {
@@ -152,7 +152,7 @@ func (d DecoderLowmem) DecodeSubscribe(r io.Reader, remainingLen uint32) (varSub
 }
 
 // DecodeSuback implements [Decoder] interface.
-func (d DecoderLowmem) DecodeSuback(r io.Reader, remainingLen uint32) (varSuback VariablesSuback, n int, err error) {
+func (d DecoderNoAlloc) DecodeSuback(r io.Reader, remainingLen uint32) (varSuback VariablesSuback, n int, err error) {
 	varSuback.PacketIdentifier, n, err = decodeUint16(r)
 	if err != nil {
 		return VariablesSuback{}, n, err
@@ -169,7 +169,7 @@ func (d DecoderLowmem) DecodeSuback(r io.Reader, remainingLen uint32) (varSuback
 }
 
 // DecodeUnsubscribe implements [Decoder] interface.
-func (d DecoderLowmem) DecodeUnsubscribe(r io.Reader, remainingLength uint32) (varUnsub VariablesUnsubscribe, n int, err error) {
+func (d DecoderNoAlloc) DecodeUnsubscribe(r io.Reader, remainingLength uint32) (varUnsub VariablesUnsubscribe, n int, err error) {
 	payloadDst := d.UserBuffer
 	varUnsub.PacketIdentifier, n, err = decodeUint16(r)
 	if err != nil {
