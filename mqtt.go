@@ -517,8 +517,6 @@ func (rc ConnectReturnCode) String() (s string) {
 // transport protocol. transp should start returning the first byte of the MQTT packet.
 // Decode header returns the decoded header and any error that prevented it from
 // reading the entire header as specified by the MQTT v3.1 protocol.
-// It performs the minimal validating to ensure it does not over-read the header's contents.
-// Header.Validate() should be called after DecodeHeader for a complete validation.
 func DecodeHeader(transp io.Reader) (Header, int, error) {
 	// Start parsing fixed header.
 	firstByte, err := decodeByte(transp)
@@ -537,7 +535,7 @@ func DecodeHeader(transp io.Reader) (Header, int, error) {
 	}
 	packetFlags := PacketFlags(firstByte & 0b1111)
 	if err := packetType.validateFlags(packetFlags); err != nil {
-		// Early validation to prevent reading more than necessary from buffer.
+		// Early validation.
 		return Header{}, n, err
 	}
 	hdr := Header{

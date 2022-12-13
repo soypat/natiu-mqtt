@@ -97,6 +97,7 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 	if rx.rxTrp == nil {
 		return 0, errors.New("nil transport")
 	}
+	rx.LastReceivedHeader = Header{}
 	hdr, n, err := DecodeHeader(rx.rxTrp)
 	if err != nil {
 		if n > 0 {

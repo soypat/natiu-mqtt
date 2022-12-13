@@ -8,10 +8,11 @@ import (
 )
 
 // Client is a blocking MQTT v3.1.1 client implementation.
+// The first field of the Client type will always be the RxTx non-pointer type.
 type Client struct {
+	rxtx RxTx
 	// ID is the ClientID field in CONNECT packets.
 	ID     string
-	rxtx   RxTx
 	lastRx time.Time
 }
 
@@ -22,6 +23,9 @@ func NewClient(userBuffer []byte) *Client {
 	return nil
 }
 
+// Connect sends a CONNECT packet over the transport. This is the first packet expected by a server.
+// Connect returns the result of the interaction, with vconnack holding the server's return code.
+// If the server
 func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err error) {
 	if c.ID == "" {
 		return VariablesConnack{}, errors.New("need to define a Client ID")
@@ -43,7 +47,8 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 	defer func() { c.rxtx.OnConnack = previousCallback }() // reset callback on exit.
 
 	_, err = c.rxtx.ReadNextPacket()
-	if err == nil && c.rxtx.LastReceivedHeader.Type() != PacketConnack {
+	gotConnack := c.rxtx.LastReceivedHeader.Type() == PacketConnack
+	if err == nil && !gotConnack {
 		return VariablesConnack{}, errors.New("expected CONNACK response to CONNECT packet")
 	}
 	return vconnack, err
@@ -61,6 +66,7 @@ func (c *Client) Disconnect() error {
 	return err
 }
 
+// Subscribe sends a SUBSCRIBE packet over the transport.
 func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err error) {
 	if err := vsub.Validate(); err != nil {
 		return VariablesSuback{}, err
@@ -121,8 +127,12 @@ func (c *Client) Ping() error {
 // RxTx returns a new RxTx that wraps the transport layer.
 // The returned RxTx uses the client's Decoder as is.
 func (c *Client) RxTx() *RxTx {
-	return &RxTx{
-		Tx: Tx{txTrp: c.rxtx.txTrp},
-		Rx: Rx{rxTrp: c.rxtx.Rx.rxTrp, userDecoder: c.rxtx.Rx.userDecoder},
-	}
+	return c.rxtx.ShallowCopy()
+}
+
+// UnsafeRxTxPointer do not use unless you know what you are doing.
+// Unsafe because it creates shared state regarding the LastReceivedHeader
+// and callbacks, which if overwritten on callers side overwrite the Client's callbacks.
+func (c *Client) UnsafeRxTxPointer() *RxTx {
+	return &c.rxtx
 }
