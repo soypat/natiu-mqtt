@@ -550,15 +550,15 @@ func TestRxTxLoopback(t *testing.T) {
 	{
 		callbackExecuted := false
 		txPI := uint16(3232)
-		txHeader := newHeader(PacketPubrel, PacketFlagsPubrelSubUnsub, 2)
-		err = rxtx.WriteOther(txHeader, txPI)
+		expectHeader := newHeader(PacketPubrel, PacketFlagsPubrelSubUnsub, 2)
+		err = rxtx.WriteIdentified(PacketPubrel, txPI)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		rxtx.OnOther = func(rt *Rx, gotPI uint16) error {
-			if rt.LastReceivedHeader != txHeader {
-				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", txHeader.String(), rt.LastReceivedHeader.String())
+			if rt.LastReceivedHeader != expectHeader {
+				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
 			if gotPI != txPI {
 				t.Error("mismatch of packet identifiers", gotPI, txPI)
@@ -571,7 +571,7 @@ func TestRxTxLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expectSize := txHeader.Size() + 2
+		expectSize := expectHeader.Size() + 2
 		if n != expectSize {
 			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
 		}
@@ -585,15 +585,15 @@ func TestRxTxLoopback(t *testing.T) {
 	//
 	{
 		callbackExecuted := false
-		txHeader := newHeader(PacketPingreq, 0, 0)
-		err = rxtx.WriteOther(txHeader, 0)
+		expectHeader := newHeader(PacketPingreq, 0, 0)
+		err = rxtx.WriteSimple(PacketPingreq)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		rxtx.OnOther = func(rt *Rx, gotPI uint16) error {
-			if rt.LastReceivedHeader != txHeader {
-				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", txHeader.String(), rt.LastReceivedHeader.String())
+			if rt.LastReceivedHeader != expectHeader {
+				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
 			if gotPI != 0 {
 				t.Error("mismatch of packet identifiers", gotPI, 0)
@@ -606,7 +606,7 @@ func TestRxTxLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expectSize := txHeader.Size()
+		expectSize := expectHeader.Size()
 		if n != expectSize {
 			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
 		}

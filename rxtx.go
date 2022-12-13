@@ -16,12 +16,18 @@ type RxTx struct {
 	Rx
 }
 
-// ShallowCopy copies RxTx. Does not copy callbacks over.
+// ShallowCopy shallow copies rxtx and underlying transports and encoders/decoders. Does not copy callbacks over.
 func (rxtx *RxTx) ShallowCopy() *RxTx {
 	return &RxTx{
-		Tx: Tx{txTrp: rxtx.txTrp},
-		Rx: Rx{rxTrp: rxtx.Rx.rxTrp, userDecoder: rxtx.Rx.userDecoder},
+		Tx: *rxtx.Tx.ShallowCopy(),
+		Rx: *rxtx.Rx.ShallowCopy(),
 	}
+}
+
+// SetTransport sets the rxtx's reader and writer.
+func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
+	rxtx.rxTrp = transport
+	rxtx.txTrp = transport
 }
 
 type Rx struct {
@@ -42,8 +48,9 @@ type Rx struct {
 	OnSub    func(*Rx, VariablesSubscribe) error
 	OnSuback func(*Rx, VariablesSuback) error
 	OnUnsub  func(*Rx, VariablesUnsubscribe) error
-	// OnRxError is called if an error is encountered during encoding or decoding of packet.
-	OnRxError func(error)
+	// OnRxError is called if an error is encountered during decoding of packet.
+	// If it is set then it becomes the responsibility of the callback to close the transport.
+	OnRxError func(*Rx, error)
 
 	// User defined decoder for allocating packets.
 	userDecoder Decoder
@@ -69,35 +76,35 @@ func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
 	return cc, nil
 }
 
+// SetRxTransport sets the rx's reader.
+func (rx *Rx) SetRxTransport(transport io.ReadCloser) {
+	rx.rxTrp = transport
+}
+
 // Close closes the underlying transport.
-func (rxtx *Rx) Close() error { return rxtx.rxTrp.Close() }
-func (rxtx *Rx) prepClose(err error) {
-	if rxtx.OnRxError != nil {
-		rxtx.OnRxError(err)
-	}
-	err = rxtx.Close()
-	if rxtx.OnRxError != nil {
-		rxtx.OnRxError(err)
+func (rx *Rx) Close() error { return rx.rxTrp.Close() }
+func (rx *Rx) rxErrHandler(err error) {
+	if rx.OnRxError != nil {
+		rx.OnRxError(rx, err)
+	} else {
+		rx.Close()
 	}
 }
 
-// SetTransport sets the rxtx's reader and writer.
-func (rxtx *Rx) SetTransport(transport io.ReadWriteCloser) {
-	rxtx.rxTrp = transport
-}
-
-// ReadNextPacket reads the next packet in the transport. If it fails it closes the transport
-// and the underlying transport must be reset.
-func (rxtx *Rx) ReadNextPacket() (int, error) {
-	if rxtx.rxTrp == nil {
+// ReadNextPacket reads the next packet in the transport. If it fails after reading a
+// non-zero amount of bytes it closes the transport and the underlying transport must be reset.
+func (rx *Rx) ReadNextPacket() (int, error) {
+	if rx.rxTrp == nil {
 		return 0, errors.New("nil transport")
 	}
-	hdr, n, err := DecodeHeader(rxtx.rxTrp)
+	hdr, n, err := DecodeHeader(rx.rxTrp)
 	if err != nil {
-		rxtx.prepClose(err)
+		if n > 0 {
+			rx.rxErrHandler(err)
+		}
 		return n, err
 	}
-	rxtx.LastReceivedHeader = hdr
+	rx.LastReceivedHeader = hdr
 	var (
 		ngot             int
 		packetIdentifier uint16
@@ -105,17 +112,17 @@ func (rxtx *Rx) ReadNextPacket() (int, error) {
 	switch hdr.Type() {
 	case PacketPublish:
 		var vp VariablesPublish
-		vp, ngot, err = rxtx.userDecoder.DecodePublish(rxtx.rxTrp, hdr.Flags().QoS())
+		vp, ngot, err = rx.userDecoder.DecodePublish(rx.rxTrp, hdr.Flags().QoS())
 		n += ngot
 		if err != nil {
 			break
 		}
 		payloadLen := int(hdr.RemainingLength) - ngot
-		lr := io.LimitedReader{R: rxtx.rxTrp, N: int64(payloadLen)}
-		if rxtx.OnPub != nil {
-			err = rxtx.OnPub(rxtx, vp, &lr)
+		lr := io.LimitedReader{R: rx.rxTrp, N: int64(payloadLen)}
+		if rx.OnPub != nil {
+			err = rx.OnPub(rx, vp, &lr)
 		} else {
-			err = rxtx.exhaustReader(&lr)
+			err = rx.exhaustReader(&lr)
 		}
 
 		if lr.N != 0 && err == nil {
@@ -125,62 +132,62 @@ func (rxtx *Rx) ReadNextPacket() (int, error) {
 
 	case PacketConnack:
 		var vc VariablesConnack
-		vc, ngot, err = rxtx.dec.DecodeConnack(rxtx.rxTrp)
+		vc, ngot, err = rx.dec.DecodeConnack(rx.rxTrp)
 		n += ngot
 		if err != nil {
 			break
 		}
-		if rxtx.OnConnack != nil {
-			err = rxtx.OnConnack(rxtx, vc)
+		if rx.OnConnack != nil {
+			err = rx.OnConnack(rx, vc)
 		}
 
 	case PacketConnect:
 		var vc VariablesConnect
-		vc, ngot, err = rxtx.userDecoder.DecodeConnect(rxtx.rxTrp)
+		vc, ngot, err = rx.userDecoder.DecodeConnect(rx.rxTrp)
 		n += ngot
 		if err != nil {
 			break
 		}
-		if rxtx.OnConnect != nil {
-			err = rxtx.OnConnect(rxtx, &vc)
+		if rx.OnConnect != nil {
+			err = rx.OnConnect(rx, &vc)
 		}
 
 	case PacketSuback:
 		var vsbck VariablesSuback
-		vsbck, ngot, err = rxtx.dec.DecodeSuback(rxtx.rxTrp, hdr.RemainingLength)
+		vsbck, ngot, err = rx.dec.DecodeSuback(rx.rxTrp, hdr.RemainingLength)
 		n += ngot
 		if err != nil {
 			break
 		}
-		if rxtx.OnSuback != nil {
-			err = rxtx.OnSuback(rxtx, vsbck)
+		if rx.OnSuback != nil {
+			err = rx.OnSuback(rx, vsbck)
 		}
 
 	case PacketSubscribe:
 		var vsbck VariablesSubscribe
-		vsbck, ngot, err = rxtx.userDecoder.DecodeSubscribe(rxtx.rxTrp, hdr.RemainingLength)
+		vsbck, ngot, err = rx.userDecoder.DecodeSubscribe(rx.rxTrp, hdr.RemainingLength)
 		n += ngot
 		if err != nil {
 			break
 		}
-		if rxtx.OnSub != nil {
-			err = rxtx.OnSub(rxtx, vsbck)
+		if rx.OnSub != nil {
+			err = rx.OnSub(rx, vsbck)
 		}
 
 	case PacketUnsubscribe:
 		var vunsub VariablesUnsubscribe
-		vunsub, ngot, err = rxtx.userDecoder.DecodeUnsubscribe(rxtx.rxTrp, hdr.RemainingLength)
+		vunsub, ngot, err = rx.userDecoder.DecodeUnsubscribe(rx.rxTrp, hdr.RemainingLength)
 		n += ngot
 		if err != nil {
 			break
 		}
-		if rxtx.OnUnsub != nil {
-			err = rxtx.OnUnsub(rxtx, vunsub)
+		if rx.OnUnsub != nil {
+			err = rx.OnUnsub(rx, vunsub)
 		}
 
 	case PacketPuback, PacketPubrec, PacketPubrel, PacketPubcomp, PacketUnsuback:
 		// Only PI, no payload.
-		packetIdentifier, ngot, err = decodeUint16(rxtx.rxTrp)
+		packetIdentifier, ngot, err = decodeUint16(rx.rxTrp)
 		n += ngot
 		if err != nil {
 			break
@@ -188,8 +195,8 @@ func (rxtx *Rx) ReadNextPacket() (int, error) {
 		fallthrough
 	case PacketDisconnect, PacketPingreq, PacketPingresp:
 		// No payload or variable header.
-		if rxtx.OnOther != nil {
-			err = rxtx.OnOther(rxtx, packetIdentifier)
+		if rx.OnOther != nil {
+			err = rx.OnOther(rx, packetIdentifier)
 		}
 
 	default:
@@ -199,17 +206,22 @@ func (rxtx *Rx) ReadNextPacket() (int, error) {
 	}
 
 	if err != nil {
-		rxtx.prepClose(err)
+		rx.rxErrHandler(err)
 	}
 	return n, err
 }
 
-func (rxtx *Rx) exhaustReader(r io.Reader) (err error) {
-	if len(rxtx.ScratchBuf) == 0 {
-		rxtx.ScratchBuf = make([]byte, 1024) // Lazy initialization when needed.
+// ShallowCopy shallow copies rx and underlying transport and decoder. Does not copy callbacks over.
+func (rx *Rx) ShallowCopy() *Rx {
+	return &Rx{rxTrp: rx.rxTrp, userDecoder: rx.userDecoder}
+}
+
+func (rx *Rx) exhaustReader(r io.Reader) (err error) {
+	if len(rx.ScratchBuf) == 0 {
+		rx.ScratchBuf = make([]byte, 1024) // Lazy initialization when needed.
 	}
 	for err == nil {
-		_, err = r.Read(rxtx.ScratchBuf[:])
+		_, err = r.Read(rx.ScratchBuf[:])
 	}
 	if errors.Is(err, io.EOF) {
 		return nil
@@ -219,9 +231,16 @@ func (rxtx *Rx) exhaustReader(r io.Reader) (err error) {
 
 // Tx implements
 type Tx struct {
-	txTrp          io.WriteCloser
-	OnTxError      func(error)
-	OnSuccessfulTx func()
+	txTrp io.WriteCloser
+	// OnTxError is called if an error is encountered during encoding. If it is set
+	// then it becomes the responsibility of the callback to close Tx's transport.
+	OnTxError      func(*Tx, error)
+	OnSuccessfulTx func(*Tx)
+}
+
+// SetTxTransport sets the rxtx's reader and writer.
+func (rxtx *Tx) SetTxTransport(transport io.WriteCloser) {
+	rxtx.txTrp = transport
 }
 
 // WriteConnack writes a CONNECT packet over the transport.
@@ -230,14 +249,18 @@ func (tx *Tx) WriteConnect(varConn *VariablesConnect) error {
 		return errors.New("nil transport")
 	}
 	h := newHeader(PacketConnect, 0, uint32(varConn.Size()))
-	_, err := h.Encode(tx.txTrp)
+	n, err := h.Encode(tx.txTrp)
 	if err != nil {
-		tx.prepClose(err)
+		if n > 0 {
+			tx.prepClose(err)
+		}
 		return err
 	}
 	_, err = encodeConnect(tx.txTrp, varConn)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -248,14 +271,18 @@ func (tx *Tx) WriteConnack(varConnack VariablesConnack) error {
 		return errors.New("nil transport")
 	}
 	h := newHeader(PacketConnack, 0, uint32(varConnack.Size()))
-	_, err := h.Encode(tx.txTrp)
+	n, err := h.Encode(tx.txTrp)
 	if err != nil {
-		tx.prepClose(err)
+		if n > 0 {
+			tx.prepClose(err)
+		}
 		return err
 	}
 	_, err = encodeConnack(tx.txTrp, varConnack)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -267,9 +294,11 @@ func (tx *Tx) WritePublishPayload(h Header, varPub VariablesPublish, payload []b
 		return errors.New("nil transport")
 	}
 	h.RemainingLength = uint32(varPub.Size() + len(payload))
-	_, err := h.Encode(tx.txTrp)
+	n, err := h.Encode(tx.txTrp)
 	if err != nil {
-		tx.prepClose(err)
+		if n > 0 {
+			tx.prepClose(err)
+		}
 		return err
 	}
 	_, err = encodePublish(tx.txTrp, varPub)
@@ -280,6 +309,8 @@ func (tx *Tx) WritePublishPayload(h Header, varPub VariablesPublish, payload []b
 	_, err = writeFull(tx.txTrp, payload)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -290,14 +321,18 @@ func (tx *Tx) WriteSubscribe(varSub VariablesSubscribe) error {
 		return errors.New("nil transport")
 	}
 	h := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varSub.Size()))
-	_, err := h.Encode(tx.txTrp)
+	n, err := h.Encode(tx.txTrp)
 	if err != nil {
-		tx.prepClose(err)
+		if n > 0 {
+			tx.prepClose(err)
+		}
 		return err
 	}
 	_, err = encodeSubscribe(tx.txTrp, varSub)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -311,14 +346,18 @@ func (tx *Tx) WriteSuback(varSub VariablesSuback) error {
 		return err
 	}
 	h := newHeader(PacketSuback, 0, uint32(varSub.Size()))
-	_, err := h.Encode(tx.txTrp)
+	n, err := h.Encode(tx.txTrp)
 	if err != nil {
-		tx.prepClose(err)
+		if n > 0 {
+			tx.prepClose(err)
+		}
 		return err
 	}
 	_, err = encodeSuback(tx.txTrp, varSub)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -329,39 +368,49 @@ func (tx *Tx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
 		return errors.New("nil transport")
 	}
 	h := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varUnsub.Size()))
-	_, err := h.Encode(tx.txTrp)
+	n, err := h.Encode(tx.txTrp)
 	if err != nil {
-		tx.prepClose(err)
+		if n > 0 {
+			tx.prepClose(err)
+		}
 		return err
 	}
 	_, err = encodeUnsubscribe(tx.txTrp, varUnsub)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
 
-// WriteOther writes PUBACK, PUBREC, PUBREL, PUBCOMP, UNSUBACK packets containing non-zero packet identfiers
-// and DISCONNECT, PINGREQ, PINGRESP packets with no packet identifier. It automatically sets the RemainingLength field.
-func (tx *Tx) WriteOther(h Header, packetIdentifier uint16) (err error) {
+// WriteIdentified writes PUBACK, PUBREC, PUBREL, PUBCOMP, UNSUBACK packets containing non-zero packet identfiers
+// It automatically sets the RemainingLength field to 2.
+func (tx *Tx) WriteIdentified(packetType PacketType, packetIdentifier uint16) (err error) {
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
-	hasPI := h.HasPacketIdentifier()
-	if hasPI {
-		h.RemainingLength = 2
-		_, err = h.Encode(tx.txTrp)
-		if err != nil {
-			tx.prepClose(err)
-			return err
-		}
-		_, err = encodeUint16(tx.txTrp, packetIdentifier)
-	} else {
-		h.RemainingLength = 0
-		_, err = h.Encode(tx.txTrp)
+	if packetIdentifier == 0 {
+		return errGotZeroPI
 	}
+	// This packet has special QoS1 flag.
+	isPubrelSubUnsub := packetType == PacketPubrel
+	if !(isPubrelSubUnsub || packetType == PacketPuback || packetType == PacketPubrec ||
+		packetType == PacketPubcomp || packetType == PacketUnsuback) {
+		return errors.New("expected a packet type from PUBACK|PUBREL|PUBCOMP|UNSUBACK")
+	}
+	n, err := newHeader(packetType, PacketFlags(b2u8(isPubrelSubUnsub)<<1), 2).Encode(tx.txTrp)
+	if err != nil {
+		if n > 0 {
+			tx.prepClose(err)
+		}
+		return err
+	}
+	_, err = encodeUint16(tx.txTrp, packetIdentifier)
 	if err != nil {
 		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -375,21 +424,27 @@ func (tx *Tx) WriteSimple(packetType PacketType) (err error) {
 	}
 	isValid := packetType == PacketDisconnect || packetType == PacketPingreq || packetType == PacketPingresp
 	if !isValid {
-		return errors.New("expected DISCONNECT, PINGREQ or PINGRESP packet")
+		return errors.New("expected packet type from PINGREQ|PINGRESP|DISCONNECT")
 	}
-	_, err = newHeader(packetType, 0, 0).Encode(tx.txTrp)
-	if err != nil {
-		return err
+	n, err := newHeader(packetType, 0, 0).Encode(tx.txTrp)
+	if err != nil && n > 0 {
+		tx.prepClose(err)
+	} else if tx.OnSuccessfulTx != nil {
+		tx.OnSuccessfulTx(tx)
 	}
 	return err
 }
 
 func (tx *Tx) prepClose(err error) {
-	if tx.OnTxError != nil {
-		tx.OnTxError(err)
+	hasOnErr := tx.OnTxError != nil
+	if hasOnErr {
+		tx.OnTxError(tx, err)
+	} else {
+		tx.txTrp.Close()
 	}
-	err = tx.txTrp.Close()
-	if tx.OnTxError != nil {
-		tx.OnTxError(err)
-	}
+}
+
+// ShallowCopy shallow copies rx and underlying transport and encoder. Does not copy callbacks over.
+func (tx *Tx) ShallowCopy() *Tx {
+	return &Tx{txTrp: tx.txTrp}
 }

@@ -53,7 +53,7 @@ func (c *Client) Disconnect() error {
 	if !c.lastRx.IsZero() {
 		return errors.New("not connected")
 	}
-	err := c.rxtx.WriteOther(newHeader(PacketDisconnect, PacketFlagsPubrelSubUnsub, 0), 0)
+	err := c.rxtx.WriteSimple(PacketDisconnect)
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		err = nil              //if EOF or network closed simply exit.
 		c.lastRx = time.Time{} // Set back to zero value indicating no connection.
@@ -104,7 +104,7 @@ func (c *Client) SetTransport(transport io.ReadWriteCloser) {
 // Ping writes a PINGREQ packet over the network and blocks until a packet is received.
 // If an error is encountered during decoding or if the received packet is not a PINGRESP then an error is returned
 func (c *Client) Ping() error {
-	err := c.rxtx.WriteOther(newHeader(PacketPingreq, 0, 0), 0)
+	err := c.rxtx.WriteSimple(PacketPingreq)
 	if err != nil {
 		return err
 	}
