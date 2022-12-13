@@ -29,8 +29,42 @@ top level. This implementation will be transport agnostic and non-concurrent. Th
 * Support for TCP transport.
 * User owns payload bytes.
 
-### Example of using a TCP connection with an RxTx
+## Examples
 API subject to change.
+
+### Example use of `Client`
+
+```go
+	// Get a transport for MQTT packets.
+	const defaultMQTTPort = ":1883"
+	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create new client.
+	client := mqtt.NewClient(make([]byte, 1500))
+	client.SetTransport(conn)
+	client.ID = "salamanca"
+
+	// Prepare for CONNECT interaction with server.
+	var varConn mqtt.VariablesConnect
+	varConn.SetDefaultMQTT(nil)              // Client automatically sets ClientID so no need to set here.
+	connack, err := client.Connect(&varConn) // Connect to server.
+	if err != nil {
+		// Error or loop until connect success.
+		log.Fatalf("CONNECT failed with return code %d: %v\n", connack.ReturnCode, err)
+	}
+	// Ping forever until error.
+	var pingErr error
+	for pingErr = client.Ping(); pingErr == nil; pingErr = client.Ping() {
+		log.Println("Ping success")
+		time.Sleep(time.Second)
+	}
+	log.Fatalln("ping failed:", pingErr)
+```
+
+### Example: Low level packet management with `RxTx` type
 ```go
 func main() {
     // Dial a TCP connection.

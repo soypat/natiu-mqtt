@@ -9,9 +9,9 @@ package mqtt
 
 const (
 	// Accepted protocol level as per MQTT v3.1.1. This goes in the CONNECT variable header.
-	defaultProtocolLevel = 4
+	DefaultProtocolLevel = 4
 	// Accepted protocol as per MQTT v3.1.1. This goes in the CONNECT variable header.
-	defaultProtocol = "MQTT"
+	DefaultProtocol = "MQTT"
 	// Size on wire after being encoded.
 	maxRemainingLengthSize = 4
 	// Max value Remaining Length can take 0xfff_ffff. When encoded over the wire this value yields 0xffff_ff7f.

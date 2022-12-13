@@ -3,10 +3,40 @@ package mqtt_test
 import (
 	"log"
 	"net"
-	"testing"
+	"time"
 
 	mqtt "github.com/soypat/natiu-mqtt"
 )
+
+func ExampleClient() {
+	// Get a transport for MQTT packets.
+	const defaultMQTTPort = ":1883"
+	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create new client.
+	client := mqtt.NewClient(make([]byte, 1500))
+	client.SetTransport(conn)
+	client.ID = "salamanca"
+
+	// Prepare for CONNECT interaction with server.
+	var varConn mqtt.VariablesConnect
+	varConn.SetDefaultMQTT(nil)              // Client automatically sets ClientID so no need to set here.
+	connack, err := client.Connect(&varConn) // Connect to server.
+	if err != nil {
+		// Error or loop until connect success.
+		log.Fatalf("CONNECT failed with return code %d: %v\n", connack.ReturnCode, err)
+	}
+	// Ping forever until error.
+	var pingErr error
+	for pingErr = client.Ping(); pingErr == nil; pingErr = client.Ping() {
+		log.Println("Ping success")
+		time.Sleep(time.Second)
+	}
+	log.Fatalln("ping failed:", pingErr)
+}
 
 func ExampleRxTx() {
 	const defaultMQTTPort = ":1883"
@@ -36,42 +66,5 @@ func ExampleRxTx() {
 	err = rxtx.WriteConnect(&varConnect)
 	if err != nil {
 		log.Fatal(err)
-	}
-	// TODO(soypat): Build a server-client example.
-	// Output:
-	// 2022/12/12 18:07:18 dial tcp 127.0.0.1:1883: connect: connection refused
-}
-
-func TestHeaderLoopback(t *testing.T) {
-	pubQoS0flag, err := mqtt.NewPublishFlags(mqtt.QoS0, false, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, header := range []struct {
-		tp    mqtt.PacketType
-		flags mqtt.PacketFlags
-
-		remlen uint32
-	}{
-		{tp: mqtt.PacketPubrel},
-		{tp: mqtt.PacketPingreq},
-		{tp: mqtt.PacketPublish, flags: pubQoS0flag},
-		{tp: mqtt.PacketConnect},
-	} {
-		h, err := mqtt.NewHeader(header.tp, header.flags, header.remlen)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h.RemainingLength != header.remlen {
-			t.Error("remaining length mismatch")
-		}
-		flagsGot := h.Flags()
-		if header.tp == mqtt.PacketPublish && flagsGot != header.flags {
-			t.Error("publish flag mismatch", flagsGot, header.flags)
-		}
-		typeGot := h.Type()
-		if typeGot != header.tp {
-			t.Error("type mismatch")
-		}
 	}
 }

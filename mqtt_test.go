@@ -49,6 +49,40 @@ func FuzzRxTxReadNextPacket(f *testing.F) {
 	_ = testCases
 }
 
+func TestHeaderLoopback(t *testing.T) {
+	pubQoS0flag, err := NewPublishFlags(QoS0, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, header := range []struct {
+		tp    PacketType
+		flags PacketFlags
+
+		remlen uint32
+	}{
+		{tp: PacketPubrel},
+		{tp: PacketPingreq},
+		{tp: PacketPublish, flags: pubQoS0flag},
+		{tp: PacketConnect},
+	} {
+		h, err := NewHeader(header.tp, header.flags, header.remlen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.RemainingLength != header.remlen {
+			t.Error("remaining length mismatch")
+		}
+		flagsGot := h.Flags()
+		if header.tp == PacketPublish && flagsGot != header.flags {
+			t.Error("publish flag mismatch", flagsGot, header.flags)
+		}
+		typeGot := h.Type()
+		if typeGot != header.tp {
+			t.Error("type mismatch")
+		}
+	}
+}
+
 func TestRxTxBadPacketRxErrors(t *testing.T) {
 	rxtx, err := NewRxTx(&testTransport{}, DecoderLowmem{UserBuffer: make([]byte, 1500)})
 	if err != nil {
@@ -144,10 +178,10 @@ func TestVariablesConnectFlags(t *testing.T) {
 	if forbidden {
 		t.Error("forbidden bit set")
 	}
-	if defaultProtocolLevel != connect.ProtocolLevel {
+	if DefaultProtocolLevel != connect.ProtocolLevel {
 		t.Error("protocol level mismatch")
 	}
-	if defaultProtocol != string(connect.Protocol) {
+	if DefaultProtocol != string(connect.Protocol) {
 		t.Error("protocol mismatch")
 	}
 	connect.WillQoS = QoS2

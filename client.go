@@ -132,7 +132,7 @@ func (c *Client) RxTx() *RxTx {
 
 // UnsafeRxTxPointer do not use unless you know what you are doing.
 // Unsafe because it creates shared state regarding the LastReceivedHeader
-// and callbacks, which if overwritten on callers side overwrite the Client's callbacks.
+// and callbacks. If these are overwritten on callers side they also overwrite the Client's callbacks.
 func (c *Client) UnsafeRxTxPointer() *RxTx {
 	return &c.rxtx
 }

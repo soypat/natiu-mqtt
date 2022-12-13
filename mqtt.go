@@ -61,7 +61,7 @@ func (hd Header) Size() (sz int) {
 	case rl < maxRemainingLengthValue:
 		sz = 5
 	default:
-		sz = 0
+		// sz = 0 // Not needed since sz's default value is zero.
 	}
 	return sz
 }
@@ -557,16 +557,18 @@ func mqttStringSize(b []byte) int {
 
 // SetDefaultMQTT sets required fields, like the ClientID, Protocol and Protocol level fields.
 // If KeepAlive is zero, is set to 60 (one minute). If Protocol field is not set to "MQTT" then memory is allocated for it.
+// Clean session is also set to true.
 func (vc *VariablesConnect) SetDefaultMQTT(clientID []byte) {
 	vc.ClientID = clientID
-	if string(vc.Protocol) != defaultProtocol {
-		vc.Protocol = make([]byte, len(defaultProtocol))
-		copy(vc.Protocol, defaultProtocol)
+	if string(vc.Protocol) != DefaultProtocol {
+		vc.Protocol = make([]byte, len(DefaultProtocol))
+		copy(vc.Protocol, DefaultProtocol)
 	}
-	vc.ProtocolLevel = defaultProtocolLevel
+	vc.ProtocolLevel = DefaultProtocolLevel
 	if vc.KeepAlive == 0 {
 		vc.KeepAlive = 60
 	}
+	vc.CleanSession = true
 }
 
 func (vsub *VariablesSubscribe) Validate() error {
