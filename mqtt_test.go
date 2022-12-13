@@ -172,8 +172,8 @@ func TestVariablesConnectFlags(t *testing.T) {
 	if wF {
 		t.Error("will flag set")
 	}
-	if cs {
-		t.Error("clean session set")
+	if !cs {
+		t.Error("clean session not set")
 	}
 	if forbidden {
 		t.Error("forbidden bit set")
@@ -187,7 +187,7 @@ func TestVariablesConnectFlags(t *testing.T) {
 	connect.WillQoS = QoS2
 	connect.Username = []byte("inigo")
 	connect.Password = []byte("123")
-	connect.CleanSession = true
+	connect.CleanSession = false
 	usr, pwd, wR, wF, cs, forbidden, qos = getFlags(connect.Flags())
 	if qos != QoS2 {
 		t.Error("QoS0 default, got ", qos.String())
@@ -204,8 +204,8 @@ func TestVariablesConnectFlags(t *testing.T) {
 	if wF {
 		t.Error("will flag set")
 	}
-	if !cs {
-		t.Error("clean session not set")
+	if cs {
+		t.Error("clean session set")
 	}
 	if forbidden {
 		t.Error("forbidden bit set")
