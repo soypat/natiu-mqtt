@@ -34,52 +34,52 @@ const (
 	// packet sent from the client to the server must be a Connect packet.
 	// A Client can only send the CONNECT Packet once over a Network Connection.
 	// The CONNECT packet contains a 10 byte variable header and a
-	// payload determined by flags present in variable header. See [VariablesConnect].
+	// payload determined by flags present in variable header. See [VariablesConnect]. 0x10.
 	PacketConnect
 	// The CONNACK Packet is the packet sent by the Server in response to a CONNECT Packet received from a Client.
 	// The first packet sent from the Server to the Client MUST be a CONNACK Packet
-	// The payload contains a 2 byte variable header and no payload.
+	// The payload contains a 2 byte variable header and no payload. 0x20.
 	PacketConnack
 	// A PUBLISH Control Packet is sent from a Client to a Server or from Server to a Client to transport an Application Message.
 	// It's payload contains a variable header with a MQTT encoded string for the topic name and a packet identifier.
 	// The payload may or may not contain a Application Message that is being published. The length of this Message
-	// can be calculated by subtracting the length of the variable header from the Remaining Length field that is in the Fixed Header.
+	// can be calculated by subtracting the length of the variable header from the Remaining Length field that is in the Fixed Header. 0x3?.
 	PacketPublish
-	// A PUBACK Packet is the response to a PUBLISH Packet with QoS level 1. It's Variable header contains the packet identifier. No payload.
+	// A PUBACK Packet is the response to a PUBLISH Packet with QoS level 1. It's Variable header contains the packet identifier. No payload. 0x40.
 	PacketPuback
-	// A PUBREC Packet is the response to a PUBLISH Packet with QoS 2. It is the second packet of the QoS 2 protocol exchange. It's Variable header contains the packet identifier. No payload.
+	// A PUBREC Packet is the response to a PUBLISH Packet with QoS 2. It is the second packet of the QoS 2 protocol exchange. It's Variable header contains the packet identifier. No payload. 0x50.
 	PacketPubrec
-	// A PUBREL Packet is the response to a PUBREC Packet. It is the third packet of the QoS 2 protocol exchange. It's Variable header contains the packet identifier. No payload.
+	// A PUBREL Packet is the response to a PUBREC Packet. It is the third packet of the QoS 2 protocol exchange. It's Variable header contains the packet identifier. No payload. 0x62.
 	PacketPubrel
-	// The PUBCOMP Packet is the response to a PUBREL Packet. It is the fourth and final packet of the QoS 2 protocol exchange. It's Variable header contains the packet identifier. No payload.
+	// The PUBCOMP Packet is the response to a PUBREL Packet. It is the fourth and final packet of the QoS 2 protocol exchange. It's Variable header contains the packet identifier. No payload. 0x70.
 	PacketPubcomp
 	// The SUBSCRIBE Packet is sent from the Client to the Server to create one or more Subscriptions.
 	// Each Subscription registers a Client’s interest in one or more Topics. The Server sends PUBLISH
 	// Packets to the Client in order to forward Application Messages that were published to Topics that match these Subscriptions.
 	// The SUBSCRIBE Packet also specifies (for each Subscription) the maximum QoS with which the Server can
 	// send Application Messages to the Client.
-	// The variable header of a subscribe topic contains the packet identifier. The payload contains a list of topic filters, see [VariablesSubscribe].
+	// The variable header of a subscribe topic contains the packet identifier. The payload contains a list of topic filters, see [VariablesSubscribe]. 0x82.
 	PacketSubscribe
 	// A SUBACK Packet is sent by the Server to the Client to confirm receipt and processing of a SUBSCRIBE Packet.
-	// The variable header contains the packet identifier. The payload contains a list of octet return codes for each subscription requested by client, see [VariablesSuback].
+	// The variable header contains the packet identifier. The payload contains a list of octet return codes for each subscription requested by client, see [VariablesSuback]. 0x90.
 	PacketSuback
 	// An UNSUBSCRIBE Packet is sent by the Client to the Server, to unsubscribe from topics.
-	// The variable header contains the packet identifier. Its payload contains a list of mqtt encoded strings corresponding to unsubscribed topics, see [VariablesUnsubscribe].
+	// The variable header contains the packet identifier. Its payload contains a list of mqtt encoded strings corresponding to unsubscribed topics, see [VariablesUnsubscribe]. 0xa2.
 	PacketUnsubscribe
 	// The UNSUBACK Packet is sent by the Server to the Client to confirm receipt of an UNSUBSCRIBE Packet.
-	// The variable header contains the packet identifier. It has no payload.
+	// The variable header contains the packet identifier. It has no payload. 0xb0.
 	PacketUnsuback
 	// The PINGREQ Packet is sent from a Client to the Server. It can be used to:
 	//  - Indicate to the Server that the Client is alive in the absence of any other Control Packets being sent from the Client to the Server.
 	//  - Request that the Server responds to confirm that it is alive.
 	//  - Exercise the network to indicate that the Network Connection is active.
-	// No payload or variable header.
+	// No payload or variable header. 0xc0.
 	PacketPingreq
 	// A PINGRESP Packet is sent by the Server to the Client in response to a PINGREQ Packet. It indicates that the Server is alive.
-	// No payload or variable header.
+	// No payload or variable header. 0xd0.
 	PacketPingresp
 	// The DISCONNECT Packet is the final Control Packet sent from the Client to the Server. It indicates that the Client is disconnecting cleanly.
-	// No payload or variable header.
+	// No payload or variable header. 0xe0.
 	PacketDisconnect
 )
 

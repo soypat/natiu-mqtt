@@ -132,6 +132,10 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		}
 
 	case PacketConnack:
+		if hdr.RemainingLength != 2 {
+			err = ErrBadRemainingLen
+			break
+		}
 		var vc VariablesConnack
 		vc, ngot, err = rx.dec.DecodeConnack(rx.rxTrp)
 		n += ngot
@@ -143,6 +147,10 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		}
 
 	case PacketConnect:
+		// if hdr.RemainingLength != 0 { // TODO(soypat): What's the minimum RL for CONNECT?
+		// 	err = ErrBadRemainingLen
+		// 	break
+		// }
 		var vc VariablesConnect
 		vc, ngot, err = rx.userDecoder.DecodeConnect(rx.rxTrp)
 		n += ngot
@@ -154,6 +162,10 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		}
 
 	case PacketSuback:
+		if hdr.RemainingLength < 2 {
+			err = ErrBadRemainingLen
+			break
+		}
 		var vsbck VariablesSuback
 		vsbck, ngot, err = rx.dec.DecodeSuback(rx.rxTrp, hdr.RemainingLength)
 		n += ngot
@@ -187,14 +199,25 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		}
 
 	case PacketPuback, PacketPubrec, PacketPubrel, PacketPubcomp, PacketUnsuback:
+		if hdr.RemainingLength != 2 {
+			err = ErrBadRemainingLen
+			break
+		}
 		// Only PI, no payload.
 		packetIdentifier, ngot, err = decodeUint16(rx.rxTrp)
 		n += ngot
 		if err != nil {
 			break
 		}
-		fallthrough
+		if rx.OnOther != nil {
+			err = rx.OnOther(rx, packetIdentifier)
+		}
+
 	case PacketDisconnect, PacketPingreq, PacketPingresp:
+		if hdr.RemainingLength != 0 {
+			err = ErrBadRemainingLen
+			break
+		}
 		// No payload or variable header.
 		if rx.OnOther != nil {
 			err = rx.OnOther(rx, packetIdentifier)
@@ -210,6 +233,11 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		rx.rxErrHandler(err)
 	}
 	return n, err
+}
+
+// RxTransport returns the underlying transport handler. It may be nil.
+func (rx *Rx) RxTransport() io.ReadCloser {
+	return rx.rxTrp
 }
 
 // ShallowCopy shallow copies rx and underlying transport and decoder. Does not copy callbacks over.
@@ -237,6 +265,11 @@ type Tx struct {
 	// then it becomes the responsibility of the callback to close Tx's transport.
 	OnTxError      func(*Tx, error)
 	OnSuccessfulTx func(*Tx)
+}
+
+// TxTransport returns the underlying transport handler. It may be nil.
+func (tx *Tx) TxTransport() io.WriteCloser {
+	return tx.txTrp
 }
 
 // SetTxTransport sets the rxtx's reader and writer.

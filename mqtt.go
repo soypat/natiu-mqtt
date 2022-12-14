@@ -35,6 +35,9 @@ var (
 	// If a buffer is too small for the incoming strings or for marshalling a subscription topic
 	// then the implementation should return this error.
 	ErrUserBufferFull = errors.New("natiu-mqtt: user buffer full")
+	// ErrBadRemainingLen is passed to Rx's OnRxError after decoding a header with a
+	// remaining length that does not conform to MQTT v3.1.1 packet specifications.
+	ErrBadRemainingLen = errors.New("natiu-mqtt: MQTT v3.1.1 bad remaining length")
 )
 
 // Header represents the bytes preceding the payload in an MQTT packet.
