@@ -17,7 +17,7 @@
 * **No external dependencies**: Nada. Nope.
 * **Data oriented design**: Minimizes abstractions or objects for the data on the wire.
 * **Fuzz tested, robust**: Decoding implementation fuzzed to prevent adversarial user input from crashing application (95% coverage).
-
+* **Simplicity**: A simple base package yields simple implementations for different transports. See [Implementations section](#implementations).
 
 ## Goals
 This implementation will have a simple embedded-systems implementation in the package
@@ -27,8 +27,11 @@ top level. This implementation will be transport agnostic and non-concurrent. Th
 * Support for TCP transport.
 * User owns payload bytes.
 
+## Implementations
+- [natiu-wsocket](https://github.com/soypat/natiu-wsocket): MQTT via **Websockets**. Tested with [moscajs/aedes broker server.](https://github.com/moscajs/aedes).
+
 ## Examples
-API subject to change.
+API subject to before v1.0.0 release.
 
 ### Example use of `Client`
 
