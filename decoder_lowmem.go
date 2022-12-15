@@ -110,19 +110,20 @@ func (d DecoderNoAlloc) DecodeConnack(r io.Reader) (VariablesConnack, int, error
 }
 
 // DecodePublish implements [Decoder] interface.
-func (d DecoderNoAlloc) DecodePublish(r io.Reader, qos QoSLevel) (VariablesPublish, int, error) {
+func (d DecoderNoAlloc) DecodePublish(r io.Reader, qos QoSLevel) (_ VariablesPublish, n int, err error) {
 	topic, n, err := decodeMQTTString(r, d.UserBuffer)
 	if err != nil {
 		return VariablesPublish{}, n, err
 	}
 	var PI uint16
 	if qos == 1 || qos == 2 {
-		pi, ngot, err := decodeUint16(r)
+		var ngot int
+		// In these cases PUBLISH contains a variable header which must be decoded.
+		PI, ngot, err = decodeUint16(r)
 		n += ngot
 		if err != nil { // && !errors.Is(err, io.EOF) TODO(soypat): Investigate if it is necessary to guard against io.EOFs on packet ends.
 			return VariablesPublish{}, n, err
 		}
-		PI = pi
 	}
 	return VariablesPublish{TopicName: topic, PacketIdentifier: PI}, n, nil
 }

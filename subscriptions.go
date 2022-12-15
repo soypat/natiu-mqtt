@@ -11,6 +11,8 @@ import (
 type Subscriptions interface {
 	// Subscribe takes a []byte slice to make it explicit and abundantly clear that
 	// Subscriptions is in charge of the memory corresponding to subscription topics.
+	// This is to say that Subscriptions should copy topic contents into its own memory
+	// storage mechanism or allocate the topic on the heap.
 	Subscribe(topic []byte) error
 
 	// Successfully matched topics are stored in the userBuffer and returned

@@ -127,15 +127,19 @@ func encodeConnack(w io.Writer, varConn VariablesConnack) (int, error) {
 }
 
 // encodePublish encodes PUBLISH packet variable header. Does not encode fixed header or user payload.
-func encodePublish(w io.Writer, varPub VariablesPublish) (n int, err error) {
-	var vbuf [2]byte
-	vbuf[0] = byte(varPub.PacketIdentifier >> 8)
-	vbuf[1] = byte(varPub.PacketIdentifier)
+func encodePublish(w io.Writer, qos QoSLevel, varPub VariablesPublish) (n int, err error) {
 	n, err = encodeMQTTString(w, varPub.TopicName)
 	if err != nil {
 		return n, err
 	}
-	return writeFull(w, vbuf[:])
+	if qos != QoS0 {
+		ngot, err := encodeUint16(w, varPub.PacketIdentifier)
+		n += ngot
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, err
 }
 
 func encodeByte(w io.Writer, value byte) (n int, err error) {

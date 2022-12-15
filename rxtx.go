@@ -122,13 +122,16 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 	}
 	rx.LastReceivedHeader = hdr
 	var (
+		packetType       = hdr.Type()
 		ngot             int
 		packetIdentifier uint16
 	)
-	switch hdr.Type() {
+	switch packetType {
 	case PacketPublish:
+		packetFlags := hdr.Flags()
+		qos := packetFlags.QoS()
 		var vp VariablesPublish
-		vp, ngot, err = rx.userDecoder.DecodePublish(rx.rxTrp, hdr.Flags().QoS())
+		vp, ngot, err = rx.userDecoder.DecodePublish(rx.rxTrp, qos)
 		n += ngot
 		if err != nil {
 			break
@@ -349,7 +352,8 @@ func (tx *Tx) WritePublishPayload(h Header, varPub VariablesPublish, payload []b
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
-	h.RemainingLength = uint32(varPub.Size() + len(payload))
+	qos := h.Flags().QoS()
+	h.RemainingLength = uint32(varPub.Size(qos) + len(payload))
 	n, err := h.Encode(tx.txTrp)
 	if err != nil {
 		if n > 0 {
@@ -357,7 +361,7 @@ func (tx *Tx) WritePublishPayload(h Header, varPub VariablesPublish, payload []b
 		}
 		return err
 	}
-	_, err = encodePublish(tx.txTrp, varPub)
+	_, err = encodePublish(tx.txTrp, qos, varPub)
 	if err != nil {
 		tx.prepClose(err)
 		return err

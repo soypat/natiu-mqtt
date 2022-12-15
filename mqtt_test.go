@@ -353,7 +353,6 @@ func TestRxTxLoopback(t *testing.T) {
 			AckFlags:   1,                      // SP set
 			ReturnCode: ReturnCodeConnAccepted, // Accepted since SP set.
 		}
-		t.Log("loopback connack:", varConnck.String())
 		err = rxtx.WriteConnack(varConnck)
 		if err != nil {
 			t.Fatal(err)
@@ -386,17 +385,18 @@ func TestRxTxLoopback(t *testing.T) {
 	// Send PUBLISH packet over wire.
 	//
 	{
-		publishPayload := []byte("ertytgbhjjhundsaip;vf[oniw[aondmiksfvoWDNFOEWOPndsafr;poulikujyhtgbfrvdcsxzaesxt dfcgvfhbg kjnlkm/'.")
+		const pubQos = QoS1
+		publishPayload := []byte("PL")
 		varPublish := VariablesPublish{
-			TopicName:        []byte("now-for-something-completely-different"),
+			TopicName:        []byte("TOP"),
 			PacketIdentifier: math.MaxUint16,
 		}
-		pubflags, err := NewPublishFlags(QoS1, true, true)
+		pubflags, err := NewPublishFlags(pubQos, true, true)
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		publishHeader := newHeader(PacketPublish, pubflags, uint32(varPublish.Size()+len(publishPayload)))
+		expectedRemainingLen := uint32(varPublish.Size(pubQos) + len(publishPayload))
+		publishHeader := newHeader(PacketPublish, pubflags, expectedRemainingLen)
 		err = rxtx.WritePublishPayload(publishHeader, varPublish, publishPayload)
 		if err != nil {
 			t.Fatal(err)
@@ -413,6 +413,9 @@ func TestRxTxLoopback(t *testing.T) {
 			if rt.LastReceivedHeader != publishHeader {
 				t.Errorf("rxtx header mismatch, txed:%v, rxed:%v", publishHeader.String(), rt.LastReceivedHeader.String())
 			}
+			if vp.Size(pubQos) != varPublish.Size(pubQos) {
+				t.Errorf("mismatch between publish variable sizes")
+			}
 			varEqual(t, varPublish, vp)
 			callbackExecuted = true
 			return nil
@@ -422,9 +425,9 @@ func TestRxTxLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expectSize := publishHeader.Size() + varPublish.Size()
-		if n != expectSize {
-			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
+
+		if n != int(expectedRemainingLen) {
+			t.Errorf("read %v bytes, expected to read %v bytes", n, expectedRemainingLen)
 		}
 		if !callbackExecuted {
 			t.Error("OnPub callback not executed")
@@ -435,17 +438,18 @@ func TestRxTxLoopback(t *testing.T) {
 	// Send PUBLISH packet over wire and ignore packet.
 	//
 	{
+		const pubQos = QoS1
 		publishPayload := []byte("ertytgbhjjhundsaip;vf[oniw[aondmiksfvoWDNFOEWOPndsafr;poulikujyhtgbfrvdcsxzaesxt dfcgvfhbg kjnlkm/'.")
 		varPublish := VariablesPublish{
 			TopicName:        []byte("now-for-something-completely-different"),
 			PacketIdentifier: math.MaxUint16,
 		}
-		pubflags, err := NewPublishFlags(QoS1, true, true)
+		pubflags, err := NewPublishFlags(pubQos, true, true)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		publishHeader := newHeader(PacketPublish, pubflags, uint32(varPublish.Size()+len(publishPayload)))
+		publishHeader := newHeader(PacketPublish, pubflags, uint32(varPublish.Size(pubQos)+len(publishPayload)))
 		err = rxtx.WritePublishPayload(publishHeader, varPublish, publishPayload)
 		if err != nil {
 			t.Fatal(err)
@@ -456,7 +460,7 @@ func TestRxTxLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expectSize := publishHeader.Size() + varPublish.Size()
+		expectSize := publishHeader.Size() + varPublish.Size(pubQos)
 		if n != expectSize {
 			t.Errorf("read %v bytes, expected to read %v bytes", n, expectSize)
 		}
