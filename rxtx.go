@@ -30,6 +30,14 @@ func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
 	rxtx.txTrp = transport
 }
 
+// Rx implements a bare minimum MQTT v3.1.1 protocol transport layer handler.
+// Packages are received by calling [Rx.ReadNextPacket] and setting the callback
+// in Rx corresponding to the expected packet.
+// Rx will perform basic validation of input data according to MQTT's specification.
+// If there is an error after reading the first byte of a packet the transport is closed
+// and a new transport must be set with [Rx.SetRxTransport].
+// If OnRxError is set the underlying transport is not automatically closed and
+// it becomes the callback's responsability to close the transport.
 type Rx struct {
 	// LastReceivedHeader contains the last correctly read header.
 	LastReceivedHeader Header
@@ -39,8 +47,13 @@ type Rx struct {
 	// Functions below can access the Header of the message via RxTx.LastReceivedHeader.
 	// All these functions block RxTx.ReadNextPacket.
 	OnConnect func(*Rx, *VariablesConnect) error // Receives pointer because of large struct!
+	// OnConnack is called on a CONNACK packet receipt.
 	OnConnack func(*Rx, VariablesConnack) error
-	OnPub     func(*Rx, VariablesPublish, io.Reader) error
+	// OnPub is called on PUBLISH packet receive. The [io.Reader] points to the transport's reader
+	// and is limited to read the amount of bytes in the payload as given by RemainingLength.
+	// One may calculate amount of bytes in the reader like so:
+	//  payloadLen := rx.LastReceivedHeader.RemainingLength - varPub.Size()
+	OnPub func(rx *Rx, varPub VariablesPublish, r io.Reader) error
 	// OnOther takes in the Header of received packet and a packet identifier uint16 if present.
 	// OnOther receives PUBACK, PUBREC, PUBREL, PUBCOMP, UNSUBACK packets containing non-zero packet identfiers
 	// and DISCONNECT, PINGREQ, PINGRESP packets with no packet identifier.
@@ -55,7 +68,9 @@ type Rx struct {
 	// User defined decoder for allocating packets.
 	userDecoder Decoder
 	// Default decoder for non allocating packets.
-	dec        DecoderNoAlloc
+	dec DecoderNoAlloc
+	// ScratchBuf is lazily allocated to exhaust Publish payloads when received and no
+	// OnPub callback is set.
 	ScratchBuf []byte
 }
 
@@ -258,12 +273,19 @@ func (rx *Rx) exhaustReader(r io.Reader) (err error) {
 	return err
 }
 
-// Tx implements
+// Tx implements a bare minimum MQTT v3.1.1 protocol transport layer handler for transmitting packets.
+// If there is an error during read/write of a packet the transport is closed
+// and a new transport must be set with [Tx.SetTxTransport].
+// A Tx will not validate data before encoding, that is up to the caller, Malformed packets
+// will be rejected and the connection will be closed immediately. If OnTxError is
+// set then the underlying transport is not closed and it becomes responsability
+// of the callback to close the transport.
 type Tx struct {
 	txTrp io.WriteCloser
 	// OnTxError is called if an error is encountered during encoding. If it is set
 	// then it becomes the responsibility of the callback to close Tx's transport.
-	OnTxError      func(*Tx, error)
+	OnTxError func(*Tx, error)
+	// OnSuccessfulTx is called after
 	OnSuccessfulTx func(*Tx)
 }
 
