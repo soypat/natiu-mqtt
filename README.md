@@ -18,6 +18,7 @@
 * **Data oriented design**: Minimizes abstractions or objects for the data on the wire.
 * **Fuzz tested, robust**: Decoding implementation fuzzed to prevent adversarial user input from crashing application (95% coverage).
 * **Simplicity**: A simple base package yields simple implementations for different transports. See [Implementations section](#implementations).
+* **Runtime-what?**: Unlike other MQTT implementations. **No** mutexes, **no** channels, **no** interface conversions, **no** goroutines- no runtimey nothin. You get the best of Go's concrete types when using Natiu's API. Why? Because MQTT deserialization and serialization are an *embarrassingly* serial and concrete problem.
 
 ## Goals
 This implementation will have a simple embedded-systems implementation in the package
