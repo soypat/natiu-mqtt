@@ -382,7 +382,7 @@ func TestRxTxLoopback(t *testing.T) {
 	}
 
 	//
-	// Send PUBLISH packet over wire.
+	// Send PUBLISH QoS1 packet over wire.
 	//
 	{
 		const pubQos = QoS1
@@ -392,6 +392,58 @@ func TestRxTxLoopback(t *testing.T) {
 			PacketIdentifier: math.MaxUint16,
 		}
 		pubflags, err := NewPublishFlags(pubQos, true, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedRemainingLen := uint32(varPublish.Size(pubQos) + len(publishPayload))
+		publishHeader := newHeader(PacketPublish, pubflags, expectedRemainingLen)
+		err = rxtx.WritePublishPayload(publishHeader, varPublish, publishPayload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		callbackExecuted := false
+		rxtx.OnPub = func(rt *Rx, vp VariablesPublish, r io.Reader) error {
+			b, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(b, publishPayload) {
+				t.Error("got different payloads!")
+			}
+			if rt.LastReceivedHeader != publishHeader {
+				t.Errorf("rxtx header mismatch, txed:%v, rxed:%v", publishHeader.String(), rt.LastReceivedHeader.String())
+			}
+			if vp.Size(pubQos) != varPublish.Size(pubQos) {
+				t.Errorf("mismatch between publish variable sizes")
+			}
+			varEqual(t, varPublish, vp)
+			callbackExecuted = true
+			return nil
+		}
+
+		n, err := rxtx.ReadNextPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if n != int(expectedRemainingLen) {
+			t.Errorf("read %v bytes, expected to read %v bytes", n, expectedRemainingLen)
+		}
+		if !callbackExecuted {
+			t.Error("OnPub callback not executed")
+		}
+	}
+	//
+	// Send PUBLISH QoS0 packet over wire.
+	//
+	{
+		const pubQos = QoS0
+		publishPayload := []byte("\xa6\x32")
+		varPublish := VariablesPublish{
+			TopicName:        []byte("pressure"),
+			PacketIdentifier: 0, // No packet ID for QoS0.
+		}
+		pubflags, err := NewPublishFlags(pubQos, false, false)
 		if err != nil {
 			t.Fatal(err)
 		}
