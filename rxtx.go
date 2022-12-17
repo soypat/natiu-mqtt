@@ -43,7 +43,20 @@ type Rx struct {
 	LastReceivedHeader Header
 	// Transport over which packets are read and written to.
 	// Not exported since RxTx type might be composed of embedded Rx and Tx types in future. TBD.
-	rxTrp io.ReadCloser
+	rxTrp       io.ReadCloser
+	RxCallbacks RxCallbacks
+	// User defined decoder for allocating packets.
+	userDecoder Decoder
+	// Default decoder for non allocating packets.
+	dec DecoderNoAlloc
+	// ScratchBuf is lazily allocated to exhaust Publish payloads when received and no
+	// OnPub callback is set.
+	ScratchBuf []byte
+}
+
+// RxCallbacks groups all functionality executed on data receipt, both successful
+// and unsuccessful.
+type RxCallbacks struct {
 	// Functions below can access the Header of the message via RxTx.LastReceivedHeader.
 	// All these functions block RxTx.ReadNextPacket.
 	OnConnect func(*Rx, *VariablesConnect) error // Receives pointer because of large struct!
@@ -64,14 +77,6 @@ type Rx struct {
 	// OnRxError is called if an error is encountered during decoding of packet.
 	// If it is set then it becomes the responsibility of the callback to close the transport.
 	OnRxError func(*Rx, error)
-
-	// User defined decoder for allocating packets.
-	userDecoder Decoder
-	// Default decoder for non allocating packets.
-	dec DecoderNoAlloc
-	// ScratchBuf is lazily allocated to exhaust Publish payloads when received and no
-	// OnPub callback is set.
-	ScratchBuf []byte
 }
 
 // NewRxTx creates a new RxTx. Before use user must configure OnX fields by setting a function
@@ -99,8 +104,8 @@ func (rx *Rx) SetRxTransport(transport io.ReadCloser) {
 // Close closes the underlying transport.
 func (rx *Rx) CloseRx() error { return rx.rxTrp.Close() }
 func (rx *Rx) rxErrHandler(err error) {
-	if rx.OnRxError != nil {
-		rx.OnRxError(rx, err)
+	if rx.RxCallbacks.OnRxError != nil {
+		rx.RxCallbacks.OnRxError(rx, err)
 	} else {
 		rx.CloseRx()
 	}
@@ -138,8 +143,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		}
 		payloadLen := int(hdr.RemainingLength) - ngot
 		lr := io.LimitedReader{R: rx.rxTrp, N: int64(payloadLen)}
-		if rx.OnPub != nil {
-			err = rx.OnPub(rx, vp, &lr)
+		if rx.RxCallbacks.OnPub != nil {
+			err = rx.RxCallbacks.OnPub(rx, vp, &lr)
 		} else {
 			err = rx.exhaustReader(&lr)
 		}
@@ -160,8 +165,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		if rx.OnConnack != nil {
-			err = rx.OnConnack(rx, vc)
+		if rx.RxCallbacks.OnConnack != nil {
+			err = rx.RxCallbacks.OnConnack(rx, vc)
 		}
 
 	case PacketConnect:
@@ -175,8 +180,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		if rx.OnConnect != nil {
-			err = rx.OnConnect(rx, &vc)
+		if rx.RxCallbacks.OnConnect != nil {
+			err = rx.RxCallbacks.OnConnect(rx, &vc)
 		}
 
 	case PacketSuback:
@@ -190,8 +195,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		if rx.OnSuback != nil {
-			err = rx.OnSuback(rx, vsbck)
+		if rx.RxCallbacks.OnSuback != nil {
+			err = rx.RxCallbacks.OnSuback(rx, vsbck)
 		}
 
 	case PacketSubscribe:
@@ -201,8 +206,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		if rx.OnSub != nil {
-			err = rx.OnSub(rx, vsbck)
+		if rx.RxCallbacks.OnSub != nil {
+			err = rx.RxCallbacks.OnSub(rx, vsbck)
 		}
 
 	case PacketUnsubscribe:
@@ -212,8 +217,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		if rx.OnUnsub != nil {
-			err = rx.OnUnsub(rx, vunsub)
+		if rx.RxCallbacks.OnUnsub != nil {
+			err = rx.RxCallbacks.OnUnsub(rx, vunsub)
 		}
 
 	case PacketPuback, PacketPubrec, PacketPubrel, PacketPubcomp, PacketUnsuback:
@@ -227,8 +232,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		if err != nil {
 			break
 		}
-		if rx.OnOther != nil {
-			err = rx.OnOther(rx, packetIdentifier)
+		if rx.RxCallbacks.OnOther != nil {
+			err = rx.RxCallbacks.OnOther(rx, packetIdentifier)
 		}
 
 	case PacketDisconnect, PacketPingreq, PacketPingresp:
@@ -237,8 +242,8 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 			break
 		}
 		// No payload or variable header.
-		if rx.OnOther != nil {
-			err = rx.OnOther(rx, packetIdentifier)
+		if rx.RxCallbacks.OnOther != nil {
+			err = rx.RxCallbacks.OnOther(rx, packetIdentifier)
 		}
 
 	default:
@@ -284,11 +289,17 @@ func (rx *Rx) exhaustReader(r io.Reader) (err error) {
 // set then the underlying transport is not closed and it becomes responsability
 // of the callback to close the transport.
 type Tx struct {
-	txTrp io.WriteCloser
+	txTrp       io.WriteCloser
+	TxCallbacks TxCallbacks
+}
+
+// TxCallbacks groups functionality executed on transmission success or failure
+// of an MQTT packet.
+type TxCallbacks struct {
 	// OnTxError is called if an error is encountered during encoding. If it is set
 	// then it becomes the responsibility of the callback to close Tx's transport.
 	OnTxError func(*Tx, error)
-	// OnSuccessfulTx is called after
+	// OnSuccessfulTx is called after a MQTT packet is fully written to the underlying transport.
 	OnSuccessfulTx func(*Tx)
 }
 
@@ -318,8 +329,8 @@ func (tx *Tx) WriteConnect(varConn *VariablesConnect) error {
 	_, err = encodeConnect(tx.txTrp, varConn)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -340,8 +351,8 @@ func (tx *Tx) WriteConnack(varConnack VariablesConnack) error {
 	_, err = encodeConnack(tx.txTrp, varConnack)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -369,8 +380,8 @@ func (tx *Tx) WritePublishPayload(h Header, varPub VariablesPublish, payload []b
 	_, err = writeFull(tx.txTrp, payload)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -391,8 +402,8 @@ func (tx *Tx) WriteSubscribe(varSub VariablesSubscribe) error {
 	_, err = encodeSubscribe(tx.txTrp, varSub)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -416,8 +427,8 @@ func (tx *Tx) WriteSuback(varSub VariablesSuback) error {
 	_, err = encodeSuback(tx.txTrp, varSub)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -438,8 +449,8 @@ func (tx *Tx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
 	_, err = encodeUnsubscribe(tx.txTrp, varUnsub)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -469,8 +480,8 @@ func (tx *Tx) WriteIdentified(packetType PacketType, packetIdentifier uint16) (e
 	_, err = encodeUint16(tx.txTrp, packetIdentifier)
 	if err != nil {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -489,8 +500,8 @@ func (tx *Tx) WriteSimple(packetType PacketType) (err error) {
 	n, err := newHeader(packetType, 0, 0).Encode(tx.txTrp)
 	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.OnSuccessfulTx != nil {
-		tx.OnSuccessfulTx(tx)
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
 }
@@ -499,8 +510,8 @@ func (tx *Tx) WriteSimple(packetType PacketType) (err error) {
 func (tx *Tx) CloseTx() error { return tx.txTrp.Close() }
 
 func (tx *Tx) prepClose(err error) {
-	if tx.OnTxError != nil {
-		tx.OnTxError(tx, err)
+	if tx.TxCallbacks.OnTxError != nil {
+		tx.TxCallbacks.OnTxError(tx, err)
 	} else {
 		tx.txTrp.Close()
 	}

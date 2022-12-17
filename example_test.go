@@ -50,7 +50,7 @@ func ExampleRxTx() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rxtx.OnConnack = func(rt *mqtt.Rx, vc mqtt.VariablesConnack) error {
+	rxtx.RxCallbacks.OnConnack = func(rt *mqtt.Rx, vc mqtt.VariablesConnack) error {
 		log.Printf("%v received, SP=%v, rc=%v", rt.LastReceivedHeader.String(), vc.SessionPresent(), vc.ReturnCode.String())
 		return nil
 	}

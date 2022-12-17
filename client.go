@@ -32,8 +32,8 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 	if err != nil {
 		return VariablesConnack{}, err
 	}
-	previousCallback := c.rxtx.OnConnack
-	c.rxtx.OnConnack = func(rt *Rx, vc VariablesConnack) error {
+	previousCallback := c.rxtx.RxCallbacks.OnConnack
+	c.rxtx.RxCallbacks.OnConnack = func(rt *Rx, vc VariablesConnack) error {
 		if vc.ReturnCode != 0 {
 			return errors.New(vc.ReturnCode.String())
 		}
@@ -41,7 +41,7 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 		vconnack = vc
 		return nil
 	}
-	defer func() { c.rxtx.OnConnack = previousCallback }() // reset callback on exit.
+	defer func() { c.rxtx.RxCallbacks.OnConnack = previousCallback }() // reset callback on exit.
 
 	_, err = c.rxtx.ReadNextPacket()
 	gotConnack := c.rxtx.LastReceivedHeader.Type() == PacketConnack
@@ -72,14 +72,14 @@ func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err
 	if err != nil {
 		return VariablesSuback{}, err
 	}
-	previousCallback := c.rxtx.OnSuback
-	c.rxtx.OnSuback = func(rt *Rx, vs VariablesSuback) error {
+	previousCallback := c.rxtx.RxCallbacks.OnSuback
+	c.rxtx.RxCallbacks.OnSuback = func(rt *Rx, vs VariablesSuback) error {
 		c.lastRx = time.Now()
 		suback = vs
 		// if previousCallback !
 		return nil
 	}
-	defer func() { c.rxtx.OnSuback = previousCallback }() // reset callback on exit.
+	defer func() { c.rxtx.RxCallbacks.OnSuback = previousCallback }() // reset callback on exit.
 
 	_, err = c.rxtx.ReadNextPacket()
 	if err == nil && c.rxtx.LastReceivedHeader.Type() != PacketSuback {

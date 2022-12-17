@@ -320,7 +320,7 @@ func TestRxTxLoopback(t *testing.T) {
 		}
 		// We now prepare to receive CONNECT packet on other side.
 		callbackExecuted := false
-		rxtx.OnConnect = func(rt *Rx, vc *VariablesConnect) error {
+		rxtx.RxCallbacks.OnConnect = func(rt *Rx, vc *VariablesConnect) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -359,7 +359,7 @@ func TestRxTxLoopback(t *testing.T) {
 		}
 		expectHeader := newHeader(PacketConnack, 0, uint32(varConnck.Size()))
 		callbackExecuted := false
-		rxtx.OnConnack = func(rt *Rx, vc VariablesConnack) error {
+		rxtx.RxCallbacks.OnConnack = func(rt *Rx, vc VariablesConnack) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -402,7 +402,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		callbackExecuted := false
-		rxtx.OnPub = func(rt *Rx, vp VariablesPublish, r io.Reader) error {
+		rxtx.RxCallbacks.OnPub = func(rt *Rx, vp VariablesPublish, r io.Reader) error {
 			b, err := io.ReadAll(r)
 			if err != nil {
 				t.Fatal(err)
@@ -454,7 +454,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		callbackExecuted := false
-		rxtx.OnPub = func(rt *Rx, vp VariablesPublish, r io.Reader) error {
+		rxtx.RxCallbacks.OnPub = func(rt *Rx, vp VariablesPublish, r io.Reader) error {
 			b, err := io.ReadAll(r)
 			if err != nil {
 				t.Fatal(err)
@@ -506,7 +506,7 @@ func TestRxTxLoopback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rxtx.OnPub = nil
+		rxtx.RxCallbacks.OnPub = nil
 
 		n, err := rxtx.ReadNextPacket()
 		if err != nil {
@@ -540,7 +540,7 @@ func TestRxTxLoopback(t *testing.T) {
 
 		expectHeader := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varsub.Size()))
 		callbackExecuted := false
-		rxtx.OnSub = func(rt *Rx, vs VariablesSubscribe) error {
+		rxtx.RxCallbacks.OnSub = func(rt *Rx, vs VariablesSubscribe) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -576,7 +576,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectHeader := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varunsub.Size()))
-		rxtx.OnUnsub = func(rt *Rx, vu VariablesUnsubscribe) error {
+		rxtx.RxCallbacks.OnUnsub = func(rt *Rx, vu VariablesUnsubscribe) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -612,7 +612,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectHeader := newHeader(PacketSuback, 0, uint32(varSuback.Size()))
-		rxtx.OnSuback = func(rt *Rx, vu VariablesSuback) error {
+		rxtx.RxCallbacks.OnSuback = func(rt *Rx, vu VariablesSuback) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -646,7 +646,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		rxtx.OnOther = func(rt *Rx, gotPI uint16) error {
+		rxtx.RxCallbacks.OnOther = func(rt *Rx, gotPI uint16) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
@@ -681,7 +681,7 @@ func TestRxTxLoopback(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		rxtx.OnOther = func(rt *Rx, gotPI uint16) error {
+		rxtx.RxCallbacks.OnOther = func(rt *Rx, gotPI uint16) error {
 			if rt.LastReceivedHeader != expectHeader {
 				t.Errorf("rxtx header mismatch, expect:%v, rxed:%v", expectHeader.String(), rt.LastReceivedHeader.String())
 			}
