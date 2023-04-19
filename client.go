@@ -52,7 +52,7 @@ func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err e
 }
 
 func (c *Client) Disconnect() error {
-	if !c.lastRx.IsZero() {
+	if c.lastRx.IsZero() {
 		return errors.New("not connected")
 	}
 	err := c.rxtx.WriteSimple(PacketDisconnect)
