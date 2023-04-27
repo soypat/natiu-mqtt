@@ -3,6 +3,7 @@ package mqtt_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"time"
@@ -14,6 +15,11 @@ func ExampleClient() {
 	// Create new client.
 	client := mqtt.NewClient(mqtt.ClientConfig{
 		Decoder: mqtt.DecoderNoAlloc{make([]byte, 1500)},
+		OnPub: func(_ mqtt.Header, _ mqtt.VariablesPublish, r io.Reader) error {
+			message, _ := io.ReadAll(r)
+			log.Println("received message:", string(message))
+			return nil
+		},
 	})
 
 	// Get a transport for MQTT packets.
