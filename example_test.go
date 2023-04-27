@@ -1,6 +1,7 @@
 package mqtt_test
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -11,7 +12,9 @@ import (
 
 func ExampleClient() {
 	// Create new client.
-	client := mqtt.NewClient(mqtt.DecoderNoAlloc{make([]byte, 1500)}, nil)
+	client := mqtt.NewClient(mqtt.ClientConfig{
+		Decoder: mqtt.DecoderNoAlloc{make([]byte, 1500)},
+	})
 
 	// Get a transport for MQTT packets.
 	const defaultMQTTPort = ":1883"
@@ -24,32 +27,23 @@ func ExampleClient() {
 	// Prepare for CONNECT interaction with server.
 	var varConn mqtt.VariablesConnect
 	varConn.SetDefaultMQTT([]byte("salamanca")) // Client automatically sets ClientID so no need to set here.
-	err = client.StartConnect(conn, &varConn)   // Connect to server.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	err = client.Connect(ctx, conn, &varConn) // Connect to server.
+	cancel()
 	if err != nil {
 		// Error or loop until connect success.
-		log.Fatalf("CONNECT failed: %v\n", err)
-	}
-
-	// Loop until connected to server or timeout.
-	for i := 0; i < 4; i++ {
-		time.Sleep(time.Second)
-		if client.IsConnected() {
-			break
-		}
+		log.Fatalf("connect attempt failed: %v\n", err)
 	}
 
 	// Ping forever until error.
 	for {
-		pingErr := client.StartPing()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		pingErr := client.Ping(ctx)
+		cancel()
 		if pingErr != nil {
 			log.Fatal("ping error: ", pingErr, " with disconnect reason:", client.Err())
 		}
-		time.Sleep(time.Second)
-		if client.AwaitingPingresp() {
-			log.Println("Ping response took longer than a second")
-		} else {
-			log.Println("Ping success")
-		}
+		log.Println("ping success!")
 	}
 	// Output:
 	// dial tcp 127.0.0.1:1883: connect: connection refused

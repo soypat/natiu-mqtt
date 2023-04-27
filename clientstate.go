@@ -34,7 +34,7 @@ func (cs *clientState) onConnect(t time.Time) {
 }
 
 // onConnect is meant to be called on opening a new connection to delete
-// previous connection state. Not guarded by mutex.
+// previous connection state.
 func (cs *clientState) OnDisconnect(err error) {
 	if err == nil {
 		panic("onDisconnect expects non-nil error")
@@ -163,4 +163,22 @@ func (cs *clientState) AwaitingSuback() bool {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	return len(cs.pendingSubs.TopicFilters) > 0
+}
+
+func (cs *clientState) PingTime() time.Time {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.pendingPingreq
+}
+
+func (cs *clientState) PendingSublen() int {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return len(cs.pendingSubs.TopicFilters)
+}
+
+func (cs *clientState) ConnectedAt() time.Time {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.connectedAt
 }
