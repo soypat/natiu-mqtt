@@ -593,3 +593,23 @@ func (vsub *VariablesSubscribe) Validate() error {
 	}
 	return nil
 }
+
+// Copy copies the subscribe variables optimizing for memory space savings.
+func (vs *VariablesSubscribe) Copy() VariablesSubscribe {
+	vscp := VariablesSubscribe{
+		TopicFilters:     make([]SubscribeRequest, len(vs.TopicFilters)),
+		PacketIdentifier: vs.PacketIdentifier,
+	}
+	blen := 0
+	for i := range vs.TopicFilters {
+		blen += len(vs.TopicFilters[i].TopicFilter)
+	}
+	buf := make([]byte, blen)
+	blen = 0
+	for i := range vs.TopicFilters {
+		vscp.TopicFilters[i].TopicFilter = buf[blen : blen+len(vs.TopicFilters[i].TopicFilter)]
+		blen += copy(vscp.TopicFilters[i].TopicFilter, vs.TopicFilters[i].TopicFilter)
+		vscp.TopicFilters[i].QoS = vs.TopicFilters[i].QoS
+	}
+	return vscp
+}

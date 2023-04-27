@@ -37,33 +37,47 @@ API subject to before v1.0.0 release.
 ### Example use of `Client`
 
 ```go
+	// Create new client.
+	client := mqtt.NewClient(mqtt.DecoderNoAlloc{make([]byte, 1500)}, nil)
+
 	// Get a transport for MQTT packets.
 	const defaultMQTTPort = ":1883"
 	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
-
-	// Create new client.
-	client := mqtt.NewClient(make([]byte, 1500))
 	client.SetTransport(conn)
-	client.ID = "salamanca"
-
 	// Prepare for CONNECT interaction with server.
 	var varConn mqtt.VariablesConnect
-	varConn.SetDefaultMQTT(nil)              // Client automatically sets ClientID so no need to set here.
-	connack, err := client.Connect(&varConn) // Connect to server.
+	varConn.SetDefaultMQTT([]byte("salamanca")) // Client automatically sets ClientID so no need to set here.
+	err = client.StartConnect(conn, &varConn)   // Connect to server.
 	if err != nil {
 		// Error or loop until connect success.
-		log.Fatalf("CONNECT failed with return code %d: %v\n", connack.ReturnCode, err)
+		log.Fatalf("CONNECT failed: %v\n", err)
 	}
-	// Ping forever until error.
-	var pingErr error
-	for pingErr = client.Ping(); pingErr == nil; pingErr = client.Ping() {
-		log.Println("Ping success")
+
+	// Loop until connected to server or timeout.
+	for i := 0; i < 4; i++ {
 		time.Sleep(time.Second)
+		if client.IsConnected() {
+			break
+		}
 	}
-	log.Fatalln("ping failed:", pingErr)
+
+	// Ping forever until error.
+	for {
+		pingErr := client.StartPing()
+		if pingErr != nil {
+			log.Fatal("ping error: ", pingErr, " with disconnect reason:", client.Err())
+		}
+		time.Sleep(time.Second)
+		if client.AwaitingPingresp() {
+			log.Println("Ping response took longer than a second")
+		} else {
+			log.Println("Ping success")
+		}
+	}
 ```
 
 ### Example: Low level packet management with `RxTx` type
