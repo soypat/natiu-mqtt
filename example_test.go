@@ -3,7 +3,6 @@ package mqtt_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +13,7 @@ import (
 	mqtt "github.com/soypat/natiu-mqtt"
 )
 
-func ExampleClientConcurrent() {
+func ExampleClient_concurrent() {
 	// Create new client.
 	received := make(chan []byte, 10)
 	client := mqtt.NewClient(mqtt.ClientConfig{
@@ -74,7 +73,7 @@ func ExampleClientConcurrent() {
 	// Call Write goroutine and create a channel to serialize messages
 	// that we want to send out.
 	const TOPICNAME = "/mqttnerds"
-	pubFlags := mqtt.NewPublishFlags(mqtt.QoS0, false, false)
+	pubFlags, _ := mqtt.NewPublishFlags(mqtt.QoS0, false, false)
 	varPub := mqtt.VariablesPublish{
 		TopicName: []byte(TOPICNAME),
 	}
@@ -85,19 +84,16 @@ func ExampleClientConcurrent() {
 				time.Sleep(time.Second)
 				continue
 			}
-			select {
-			case message := <-txQueue:
-				var err error = errors.New("loop")
-				varPub.PacketIdentifier = uint16(rand.Int())
-				// Loop until message is sent succesfully. This guarantees
-				// all messages are sent, even in events of disconnect.
-				for {
-					err = client.PublishPayload(pubFlags, varPub, message)
-					if err == nil {
-						break
-					}
-					time.Sleep(time.Second)
+			message := <-txQueue
+			varPub.PacketIdentifier = uint16(rand.Int())
+			// Loop until message is sent succesfully. This guarantees
+			// all messages are sent, even in events of disconnect.
+			for {
+				err := client.PublishPayload(pubFlags, varPub, message)
+				if err == nil {
+					break
 				}
+				time.Sleep(time.Second)
 			}
 		}
 	}()
