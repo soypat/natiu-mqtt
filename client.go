@@ -24,8 +24,11 @@ type Client struct {
 }
 
 type ClientConfig struct {
+	// If a Decoder is not set one will automatically be picked.
 	Decoder Decoder
-	OnPub   func(pubHead Header, varPub VariablesPublish, r io.Reader) error
+	// OnPub is executed on every PUBLISH message received. Do not call
+	// HandleNext or other client methods from within this function.
+	OnPub func(pubHead Header, varPub VariablesPublish, r io.Reader) error
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -75,7 +78,7 @@ func (c *Client) StartConnect(rwc io.ReadWriteCloser, vc *VariablesConnect) erro
 	if c.cs.IsConnected() {
 		return errors.New("already connected; disconnect before connecting")
 	}
-	c.SetTransport(rwc)
+	c.setTransport(rwc)
 	c.txlock.Lock()
 	defer c.txlock.Unlock()
 	return c.tx.WriteConnect(vc)
@@ -167,19 +170,22 @@ func (c *Client) SubscribedTopics() []string {
 	return c.cs.activeSubs
 }
 
-func (c *Client) PublishPayload(hdr Header, vp VariablesPublish, payload []byte) error {
+// PublishPayload sends a PUBLISH packet over the network on the topic defined by
+// varPub.
+func (c *Client) PublishPayload(flags PacketFlags, varPub VariablesPublish, payload []byte) error {
 	if !c.IsConnected() {
 		return errDisconnected
 	}
-	if err := vp.Validate(); err != nil {
+	if err := varPub.Validate(); err != nil {
 		return err
 	}
-	if hdr.Flags().QoS() != QoS0 {
-		return errors.New("only support QoS0")
+	qos := flags.QoS()
+	if qos != QoS0 {
+		return errors.New("only supports QoS0")
 	}
 	c.txlock.Lock()
 	defer c.txlock.Unlock()
-	return c.tx.WritePublishPayload(hdr, vp, payload)
+	return c.tx.WritePublishPayload(newHeader(PacketPublish, flags, uint32(varPub.Size(qos)+len(payload))), varPub, payload)
 }
 
 // Err returns error indicating the cause of client disconnection.
@@ -187,9 +193,9 @@ func (c *Client) Err() error {
 	return c.cs.Err()
 }
 
-// SetTransport sets the underlying transport. This allows users to re-open
+// setTransport sets the underlying transport. This allows users to re-open
 // failed/closed connections on [RxTx] side and resuming communication with server.
-func (c *Client) SetTransport(transport io.ReadWriteCloser) {
+func (c *Client) setTransport(transport io.ReadWriteCloser) {
 	c.tx.SetTxTransport(transport)
 	c.rx.SetRxTransport(transport)
 }

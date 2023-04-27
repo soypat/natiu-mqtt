@@ -54,10 +54,10 @@ API subject to before v1.0.0 release.
 		fmt.Println(err)
 		return
 	}
-	client.SetTransport(conn)
+
 	// Prepare for CONNECT interaction with server.
 	var varConn mqtt.VariablesConnect
-	varConn.SetDefaultMQTT([]byte("salamanca")) // Client automatically sets ClientID so no need to set here.
+	varConn.SetDefaultMQTT([]byte("salamanca"))
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	err = client.Connect(ctx, conn, &varConn) // Connect to server.
 	cancel()

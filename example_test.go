@@ -1,26 +1,120 @@
 package mqtt_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"time"
 
 	mqtt "github.com/soypat/natiu-mqtt"
 )
 
-func ExampleClient() {
+func ExampleClientConcurrent() {
 	// Create new client.
+	received := make(chan []byte, 10)
 	client := mqtt.NewClient(mqtt.ClientConfig{
 		Decoder: mqtt.DecoderNoAlloc{make([]byte, 1500)},
 		OnPub: func(_ mqtt.Header, _ mqtt.VariablesPublish, r io.Reader) error {
 			message, _ := io.ReadAll(r)
+			if len(message) > 0 {
+				select {
+				case received <- message:
+				default:
+					// If channel is full we ignore message.
+				}
+			}
 			log.Println("received message:", string(message))
 			return nil
 		},
 	})
+
+	// Set the connection parameters and set the Client ID to "salamanca".
+	var varConn mqtt.VariablesConnect
+	varConn.SetDefaultMQTT([]byte("salamanca"))
+
+	// Define an inline function that connects the MQTT client automatically.
+	tryConnect := func() error {
+		// Get a transport for MQTT packets using the local host and default MQTT port (1883).
+		conn, err := net.Dial("tcp", "127.0.0.1:1883")
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		return client.Connect(ctx, conn, &varConn) // Connect to server.
+	}
+	// Attempt first connection and fail immediately if that does not work.
+	err := tryConnect()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	// Call read goroutine. Read goroutine will also handle reconnection
+	// when client disconnects.
+	go func() {
+		for {
+			if !client.IsConnected() {
+				time.Sleep(time.Second)
+				tryConnect()
+				continue
+			}
+			err = client.HandleNext()
+			if err != nil {
+				log.Println("HandleNext failed:", err)
+			}
+		}
+	}()
+
+	// Call Write goroutine and create a channel to serialize messages
+	// that we want to send out.
+	const TOPICNAME = "/mqttnerds"
+	pubFlags := mqtt.NewPublishFlags(mqtt.QoS0, false, false)
+	varPub := mqtt.VariablesPublish{
+		TopicName: []byte(TOPICNAME),
+	}
+	txQueue := make(chan []byte, 10)
+	go func() {
+		for {
+			if !client.IsConnected() {
+				time.Sleep(time.Second)
+				continue
+			}
+			select {
+			case message := <-txQueue:
+				var err error = errors.New("loop")
+				varPub.PacketIdentifier = uint16(rand.Int())
+				// Loop until message is sent succesfully. This guarantees
+				// all messages are sent, even in events of disconnect.
+				for {
+					err = client.PublishPayload(pubFlags, varPub, message)
+					if err == nil {
+						break
+					}
+					time.Sleep(time.Second)
+				}
+			}
+		}
+	}()
+
+	// Main program logic.
+	for {
+		message := <-received
+		// We transform the message and send it back out.
+		fields := bytes.Fields(message)
+		message = bytes.Join(fields, []byte(","))
+		txQueue <- message
+	}
+}
+
+func ExampleClient() {
+	// Create new client with default settings.
+	client := mqtt.NewClient(mqtt.ClientConfig{})
 
 	// Get a transport for MQTT packets.
 	const defaultMQTTPort = ":1883"
@@ -29,10 +123,10 @@ func ExampleClient() {
 		fmt.Println(err)
 		return
 	}
-	client.SetTransport(conn)
+
 	// Prepare for CONNECT interaction with server.
 	var varConn mqtt.VariablesConnect
-	varConn.SetDefaultMQTT([]byte("salamanca")) // Client automatically sets ClientID so no need to set here.
+	varConn.SetDefaultMQTT([]byte("salamanca"))
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	err = client.Connect(ctx, conn, &varConn) // Connect to server.
 	cancel()
