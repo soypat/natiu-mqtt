@@ -42,6 +42,8 @@ func (cs *clientState) OnDisconnect(err error) {
 	cs.mu.Lock()
 	cs.closeErr = err
 	cs.connectedAt = time.Time{}
+	cs.lastRx = time.Time{}
+	cs.lastTx = time.Time{}
 	cs.mu.Unlock()
 }
 
@@ -129,7 +131,7 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 func (cs *clientState) IsConnected() bool {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if cs.connectedAt.IsZero() == (cs.closeErr != nil) {
+	if cs.connectedAt.IsZero() != (cs.closeErr != nil) {
 		panic("assertion failed: bug in natiu-mqtt clientState implementation")
 	}
 	return cs.closeErr == nil
@@ -140,7 +142,7 @@ func (cs *clientState) IsConnected() bool {
 func (cs *clientState) Err() error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if cs.connectedAt.IsZero() == (cs.closeErr != nil) {
+	if cs.connectedAt.IsZero() != (cs.closeErr != nil) {
 		panic("assertion failed: bug in natiu-mqtt clientState implementation")
 	}
 	return cs.closeErr
