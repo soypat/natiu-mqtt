@@ -17,9 +17,9 @@ var (
 // The first field of the Client type will always be the RxTx non-pointer type.
 type Client struct {
 	cs     clientState
-	rx     Rx
 	txlock sync.Mutex
 	rxlock sync.Mutex
+	rx     Rx
 	tx     Tx
 }
 
@@ -134,12 +134,16 @@ func (c *Client) StartSubscribe(vsub VariablesSubscribe) error {
 	if !c.IsConnected() {
 		return errDisconnected
 	}
-	if c.AwaitingSuback() {
-		return errors.New("tried to subscribe while still awaiting suback")
-	}
 	if err := vsub.Validate(); err != nil {
 		return err
 	}
+
+	if c.AwaitingSuback() {
+		return errors.New("tried to subscribe while still awaiting suback")
+	}
+	c.cs.pendingSubs = vsub.Copy()
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
 	return c.tx.WriteSubscribe(vsub)
 }
 
@@ -197,6 +201,8 @@ func (c *Client) Err() error {
 // setTransport sets the underlying transport. This allows users to re-open
 // failed/closed connections on [RxTx] side and resuming communication with server.
 func (c *Client) setTransport(transport io.ReadWriteCloser) {
+	c.rxlock.Lock()
+	defer c.rxlock.Unlock()
 	c.tx.SetTxTransport(transport)
 	c.rx.SetRxTransport(transport)
 }
@@ -206,6 +212,8 @@ func (c *Client) StartPing() error {
 	if !c.IsConnected() {
 		return errDisconnected
 	}
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
 	return c.tx.WriteSimple(PacketPingreq)
 }
 
@@ -237,6 +245,8 @@ func (c *Client) Ping(ctx context.Context) error {
 // AwaitingPingresp checks if a ping sent over the wire had no response received back.
 func (c *Client) AwaitingPingresp() bool { return c.cs.AwaitingPingresp() }
 
+// ConnectedAt returns the time the client managed to succesfully connect. If
+// client is disconnected ConnectedAt returns the zero-value for time.Time.
 func (c *Client) ConnectedAt() time.Time { return c.cs.ConnectedAt() }
 
 // AwaitingSuback checks if a subscribe request sent over the wire had no suback received back.

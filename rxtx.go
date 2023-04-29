@@ -5,31 +5,6 @@ import (
 	"io"
 )
 
-// RxTx implements a bare minimum MQTT v3.1.1 protocol transport layer handler.
-// If there is an error during read/write of a packet the transport is closed
-// and a new transport must be set with [RxTx.SetTransport].
-// An RxTx will not validate data before encoding, that is up to the caller, it
-// will validate incoming data according to MQTT's specification. Malformed packets
-// will be rejected and the connection will be closed immediately with a call to [RxTx.OnError].
-type RxTx struct {
-	Tx
-	Rx
-}
-
-// ShallowCopy shallow copies rxtx and underlying transports and encoders/decoders. Does not copy callbacks over.
-func (rxtx *RxTx) ShallowCopy() *RxTx {
-	return &RxTx{
-		Tx: *rxtx.Tx.ShallowCopy(),
-		Rx: *rxtx.Rx.ShallowCopy(),
-	}
-}
-
-// SetTransport sets the rxtx's reader and writer.
-func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
-	rxtx.rxTrp = transport
-	rxtx.txTrp = transport
-}
-
 // Rx implements a bare minimum MQTT v3.1.1 protocol transport layer handler.
 // Packages are received by calling [Rx.ReadNextPacket] and setting the callback
 // in Rx corresponding to the expected packet.
@@ -38,6 +13,8 @@ func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
 // and a new transport must be set with [Rx.SetRxTransport].
 // If OnRxError is set the underlying transport is not automatically closed and
 // it becomes the callback's responsability to close the transport.
+//
+//	Not safe for concurrent use.
 type Rx struct {
 	// LastReceivedHeader contains the last correctly read header.
 	LastReceivedHeader Header
@@ -77,23 +54,6 @@ type RxCallbacks struct {
 	// OnRxError is called if an error is encountered during decoding of packet.
 	// If it is set then it becomes the responsibility of the callback to close the transport.
 	OnRxError func(*Rx, error)
-}
-
-// NewRxTx creates a new RxTx. Before use user must configure OnX fields by setting a function
-// to perform an action each time a packet is received. After a call to transport.Close()
-// all future calls must return errors until the transport is replaced with [RxTx.SetTransport].
-func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
-	if transport == nil || decoder == nil {
-		return nil, errors.New("got nil transport io.ReadWriteCloser or nil Decoder")
-	}
-	cc := &RxTx{
-		Rx: Rx{
-			rxTrp:       transport,
-			userDecoder: decoder,
-		},
-		Tx: Tx{txTrp: transport},
-	}
-	return cc, nil
 }
 
 // SetRxTransport sets the rx's reader.

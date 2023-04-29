@@ -164,9 +164,24 @@ func (cs *clientState) AwaitingPingresp() bool {
 func (cs *clientState) AwaitingSuback() bool {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
+	return cs.awaitingSuback()
+}
+func (cs *clientState) awaitingSuback() bool {
 	return len(cs.pendingSubs.TopicFilters) > 0
 }
 
+func (cs *clientState) RegisterSubscribe(vsub VariablesSubscribe) error {
+	if len(vsub.TopicFilters) == 0 {
+		return errors.New("need at least one topic to subscribe")
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if cs.awaitingSuback() {
+		return errors.New("tried to register subscribe while awaiting suback")
+	}
+	cs.pendingSubs = vsub.Copy()
+	return nil
+}
 func (cs *clientState) PingTime() time.Time {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
