@@ -1,6 +1,8 @@
 package mqtt
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 )
@@ -291,6 +293,7 @@ func (rx *Rx) exhaustReader(r io.Reader) (err error) {
 type Tx struct {
 	txTrp       io.WriteCloser
 	TxCallbacks TxCallbacks
+	buffer      bytes.Buffer
 }
 
 // TxCallbacks groups functionality executed on transmission success or failure
@@ -318,18 +321,21 @@ func (tx *Tx) WriteConnect(varConn *VariablesConnect) error {
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
+	buffer := &tx.buffer
+	buffer.Reset()
 	h := newHeader(PacketConnect, 0, uint32(varConn.Size()))
-	n, err := h.Encode(tx.txTrp)
+	_, err := h.Encode(buffer)
 	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
 		return err
 	}
-	_, err = encodeConnect(tx.txTrp, varConn)
+	_, err = encodeConnect(buffer, varConn)
 	if err != nil {
+		return err
+	}
+	n, err := buffer.WriteTo(tx.txTrp)
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -340,18 +346,21 @@ func (tx *Tx) WriteConnack(varConnack VariablesConnack) error {
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
+	buffer := &tx.buffer
+	buffer.Reset()
 	h := newHeader(PacketConnack, 0, uint32(varConnack.Size()))
-	n, err := h.Encode(tx.txTrp)
+	_, err := h.Encode(buffer)
 	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
 		return err
 	}
-	_, err = encodeConnack(tx.txTrp, varConnack)
+	_, err = encodeConnack(buffer, varConnack)
 	if err != nil {
+		return err
+	}
+	n, err := buffer.WriteTo(tx.txTrp)
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -363,24 +372,26 @@ func (tx *Tx) WritePublishPayload(h Header, varPub VariablesPublish, payload []b
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
+	buffer := &tx.buffer
+	buffer.Reset()
 	qos := h.Flags().QoS()
 	h.RemainingLength = uint32(varPub.Size(qos) + len(payload))
-	n, err := h.Encode(tx.txTrp)
+	_, err := h.Encode(buffer)
 	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
 		return err
 	}
-	_, err = encodePublish(tx.txTrp, qos, varPub)
+	_, err = encodePublish(buffer, qos, varPub)
 	if err != nil {
-		tx.prepClose(err)
 		return err
 	}
-	_, err = writeFull(tx.txTrp, payload)
+	_, err = writeFull(buffer, payload)
 	if err != nil {
+		return err
+	}
+	n, err := buffer.WriteTo(tx.txTrp)
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -391,18 +402,21 @@ func (tx *Tx) WriteSubscribe(varSub VariablesSubscribe) error {
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
+	buffer := &tx.buffer
+	buffer.Reset()
 	h := newHeader(PacketSubscribe, PacketFlagsPubrelSubUnsub, uint32(varSub.Size()))
-	n, err := h.Encode(tx.txTrp)
+	_, err := h.Encode(buffer)
 	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
 		return err
 	}
-	_, err = encodeSubscribe(tx.txTrp, varSub)
+	_, err = encodeSubscribe(buffer, varSub)
 	if err != nil {
+		return err
+	}
+	n, err := buffer.WriteTo(tx.txTrp)
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -416,18 +430,21 @@ func (tx *Tx) WriteSuback(varSub VariablesSuback) error {
 	if err := varSub.Validate(); err != nil {
 		return err
 	}
+	buffer := &tx.buffer
+	buffer.Reset()
 	h := newHeader(PacketSuback, 0, uint32(varSub.Size()))
-	n, err := h.Encode(tx.txTrp)
+	_, err := h.Encode(buffer)
 	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
 		return err
 	}
-	_, err = encodeSuback(tx.txTrp, varSub)
+	_, err = encodeSuback(buffer, varSub)
 	if err != nil {
+		return err
+	}
+	n, err := buffer.WriteTo(tx.txTrp)
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -438,18 +455,21 @@ func (tx *Tx) WriteUnsubscribe(varUnsub VariablesUnsubscribe) error {
 	if tx.txTrp == nil {
 		return errors.New("nil transport")
 	}
+	buffer := &tx.buffer
+	buffer.Reset()
 	h := newHeader(PacketUnsubscribe, PacketFlagsPubrelSubUnsub, uint32(varUnsub.Size()))
-	n, err := h.Encode(tx.txTrp)
+	_, err := h.Encode(buffer)
 	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
 		return err
 	}
-	_, err = encodeUnsubscribe(tx.txTrp, varUnsub)
+	_, err = encodeUnsubscribe(buffer, varUnsub)
 	if err != nil {
+		return err
+	}
+	n, err := buffer.WriteTo(tx.txTrp)
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -470,17 +490,15 @@ func (tx *Tx) WriteIdentified(packetType PacketType, packetIdentifier uint16) (e
 		packetType == PacketPubcomp || packetType == PacketUnsuback) {
 		return errors.New("expected a packet type from PUBACK|PUBREL|PUBCOMP|UNSUBACK")
 	}
-	n, err := newHeader(packetType, PacketFlags(b2u8(isPubrelSubUnsub)<<1), 2).Encode(tx.txTrp)
-	if err != nil {
-		if n > 0 {
-			tx.prepClose(err)
-		}
-		return err
-	}
-	_, err = encodeUint16(tx.txTrp, packetIdentifier)
-	if err != nil {
+
+	var buf [5 + 2]byte
+	n := newHeader(packetType, PacketFlags(b2u8(isPubrelSubUnsub)<<1), 2).Put(buf[:])
+	binary.BigEndian.PutUint16(buf[n:], packetIdentifier)
+	n, err = writeFull(tx.txTrp, buf[:n+2])
+
+	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err
@@ -500,7 +518,7 @@ func (tx *Tx) WriteSimple(packetType PacketType) (err error) {
 	n, err := newHeader(packetType, 0, 0).Encode(tx.txTrp)
 	if err != nil && n > 0 {
 		tx.prepClose(err)
-	} else if tx.TxCallbacks.OnSuccessfulTx != nil {
+	} else if tx.TxCallbacks.OnSuccessfulTx != nil && err == nil {
 		tx.TxCallbacks.OnSuccessfulTx(tx)
 	}
 	return err

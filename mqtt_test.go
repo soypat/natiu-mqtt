@@ -235,22 +235,23 @@ func TestHeaderSize(t *testing.T) {
 func TestHeaderEncodeDecodeLoopback(t *testing.T) {
 	var b bytes.Buffer
 	for _, test := range []struct {
+		desc   string
 		h      Header
 		expect int
 	}{
-		{h: newHeader(1, 0, maxRemainingLengthValue), expect: 5},   // TODO(soypat): must support up to maxRemainingLengthValue remaining length.
-		{h: newHeader(1, 0, maxRemainingLengthValue+1), expect: 0}, // bad remaining length
-		{h: newHeader(1, 0, 0), expect: 2},
-		{h: newHeader(1, 0, 1), expect: 2},
-		{h: newHeader(1, 0, 2), expect: 2},
-		{h: newHeader(1, 0, 128), expect: 3},
-		{h: newHeader(1, 0, 0xffff), expect: 4},
+		{desc: "max remlen", h: newHeader(1, 0, maxRemainingLengthValue), expect: 5},         // TODO(soypat): must support up to maxRemainingLengthValue remaining length.
+		{desc: "bad: maxremlen+1", h: newHeader(1, 0, maxRemainingLengthValue+1), expect: 0}, // bad remaining length
+		{desc: "remlen=0", h: newHeader(1, 0, 0), expect: 2},
+		{desc: "remlen=1", h: newHeader(1, 0, 1), expect: 2},
+		{desc: "remlen=2", h: newHeader(1, 0, 2), expect: 2},
+		{desc: "medium remlen", h: newHeader(1, 0, 128), expect: 3},
+		{desc: "big remlen", h: newHeader(1, 0, 0xffff), expect: 4},
 	} {
 		hdr := test.h
 		nencode, err := hdr.Encode(&b)
 		if hdr.RemainingLength > maxRemainingLengthValue {
 			if err == nil {
-				t.Error("expected error for malformed packet")
+				t.Errorf("%s: expected error for malformed packet", test.desc)
 			}
 			continue
 		}
@@ -259,16 +260,16 @@ func TestHeaderEncodeDecodeLoopback(t *testing.T) {
 		}
 		gotHdr, ndecode, err := DecodeHeader(&b)
 		if err != nil {
-			t.Fatalf("decoded %d byte for %+v: %v", ndecode, hdr, err)
+			t.Fatalf("%s:decoded %d byte for %+v: %v", test.desc, ndecode, hdr, err)
 		}
 		if nencode != ndecode {
-			t.Errorf("number of bytes encoded (%d) not match decoded (%d)", nencode, ndecode)
+			t.Errorf("%s: number of bytes encoded (%d) not match decoded (%d)", test.desc, nencode, ndecode)
 		}
 		if nencode != test.expect {
-			t.Errorf("expected to encode %d bytes, encoded %d: %s", test.expect, nencode, hdr)
+			t.Errorf("%s: expected to encode %d bytes, encoded %d: %s", test.desc, test.expect, nencode, hdr)
 		}
 		if hdr != gotHdr {
-			t.Errorf("header mismatch in values encode:%+v; decode:%+v", hdr, gotHdr)
+			t.Errorf("%s: header mismatch in values encode:%+v; decode:%+v", test.desc, hdr, gotHdr)
 		}
 	}
 }
