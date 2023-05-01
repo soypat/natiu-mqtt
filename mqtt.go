@@ -45,9 +45,9 @@ var (
 // PacketIdentifier, which is part of the Variable Header and may or may not be present
 // in an MQTT packet.
 type Header struct {
-	// firstByte contains packet type in MSB bits 7-4 and flags in LSB bits 3-0.
-	firstByte       byte
 	RemainingLength uint32
+	// firstByte contains packet type in MSB bits 7-4 and flags in LSB bits 3-0.
+	firstByte byte
 }
 
 // Size returns the size of the header as encoded over the wire. If the remaining
@@ -73,7 +73,7 @@ func (hd Header) Size() (sz int) {
 func (hd Header) HasPacketIdentifier() bool {
 	tp := hd.Type()
 	qos := hd.Flags().QoS()
-	if tp == PacketPublish && (qos == 1 || qos == 2) {
+	if tp == PacketPublish && (qos == QoS1 || qos == QoS2) {
 		return true
 	}
 	noPI := tp == PacketConnect || tp == PacketConnack ||
@@ -592,4 +592,24 @@ func (vsub *VariablesSubscribe) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Copy copies the subscribe variables optimizing for memory space savings.
+func (vs *VariablesSubscribe) Copy() VariablesSubscribe {
+	vscp := VariablesSubscribe{
+		TopicFilters:     make([]SubscribeRequest, len(vs.TopicFilters)),
+		PacketIdentifier: vs.PacketIdentifier,
+	}
+	blen := 0
+	for i := range vs.TopicFilters {
+		blen += len(vs.TopicFilters[i].TopicFilter)
+	}
+	buf := make([]byte, blen)
+	blen = 0
+	for i := range vs.TopicFilters {
+		vscp.TopicFilters[i].TopicFilter = buf[blen : blen+len(vs.TopicFilters[i].TopicFilter)]
+		blen += copy(vscp.TopicFilters[i].TopicFilter, vs.TopicFilters[i].TopicFilter)
+		vscp.TopicFilters[i].QoS = vs.TopicFilters[i].QoS
+	}
+	return vscp
 }

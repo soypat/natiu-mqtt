@@ -18,7 +18,7 @@
 * **Data oriented design**: Minimizes abstractions or objects for the data on the wire.
 * **Fuzz tested, robust**: Decoding implementation fuzzed to prevent adversarial user input from crashing application (95% coverage).
 * **Simplicity**: A simple base package yields simple implementations for different transports. See [Implementations section](#implementations).
-* **Runtime-what?**: Unlike other MQTT implementations. **No** mutexes, **no** channels, **no** interface conversions, **no** goroutines- no runtimey nothin. You get the best of Go's concrete types when using Natiu's API. Why? Because MQTT deserialization and serialization are an *embarrassingly* serial and concrete problem.
+* **Runtime-what?**: Unlike other MQTT implementations. **No** channels, **no** interface conversions, **no** goroutines- as little runtimey stuff as possible. You get the best of Go's concrete types when using Natiu's API. Why? Because MQTT deserialization and serialization are an *embarrassingly* serial and concrete problem.
 
 ## Goals
 This implementation will have a simple embedded-systems implementation in the package
@@ -37,33 +37,45 @@ API subject to before v1.0.0 release.
 ### Example use of `Client`
 
 ```go
+	// Create new client.
+	client := mqtt.NewClient(mqtt.ClientConfig{
+		Decoder: mqtt.DecoderNoAlloc{make([]byte, 1500)},
+		OnPub: func(_ mqtt.Header, _ mqtt.VariablesPublish, r io.Reader) error {
+			message, _ := io.ReadAll(r)
+			log.Println("received message:", string(message))
+			return nil
+		},
+	})
+
 	// Get a transport for MQTT packets.
 	const defaultMQTTPort = ":1883"
 	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
-
-	// Create new client.
-	client := mqtt.NewClient(make([]byte, 1500))
-	client.SetTransport(conn)
-	client.ID = "salamanca"
 
 	// Prepare for CONNECT interaction with server.
 	var varConn mqtt.VariablesConnect
-	varConn.SetDefaultMQTT(nil)              // Client automatically sets ClientID so no need to set here.
-	connack, err := client.Connect(&varConn) // Connect to server.
+	varConn.SetDefaultMQTT([]byte("salamanca"))
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	err = client.Connect(ctx, conn, &varConn) // Connect to server.
+	cancel()
 	if err != nil {
 		// Error or loop until connect success.
-		log.Fatalf("CONNECT failed with return code %d: %v\n", connack.ReturnCode, err)
+		log.Fatalf("connect attempt failed: %v\n", err)
 	}
+
 	// Ping forever until error.
-	var pingErr error
-	for pingErr = client.Ping(); pingErr == nil; pingErr = client.Ping() {
-		log.Println("Ping success")
-		time.Sleep(time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		pingErr := client.Ping(ctx)
+		cancel()
+		if pingErr != nil {
+			log.Fatal("ping error: ", pingErr, " with disconnect reason:", client.Err())
+		}
+		log.Println("ping success!")
 	}
-	log.Fatalln("ping failed:", pingErr)
 ```
 
 ### Example: Low level packet management with `RxTx` type

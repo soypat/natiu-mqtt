@@ -1,135 +1,301 @@
 package mqtt
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"time"
 )
 
-// Client is a blocking MQTT v3.1.1 client implementation.
+var (
+	errDisconnected = errors.New("natiu-mqtt: disconnected")
+)
+
+// Client is a asynchronous MQTT v3.1.1 client implementation.
 // The first field of the Client type will always be the RxTx non-pointer type.
 type Client struct {
-	rxtx RxTx
-	// ID is the ClientID field in CONNECT packets.
-	ID     string
-	lastRx time.Time
+	cs     clientState
+	txlock sync.Mutex
+	rxlock sync.Mutex
+	rx     Rx
+	tx     Tx
 }
 
-func NewClient(decoder Decoder) *Client {
-	return &Client{rxtx: RxTx{Rx: Rx{userDecoder: decoder}}}
+type ClientConfig struct {
+	// If a Decoder is not set one will automatically be picked.
+	Decoder Decoder
+	// OnPub is executed on every PUBLISH message received. Do not call
+	// HandleNext or other client methods from within this function.
+	OnPub func(pubHead Header, varPub VariablesPublish, r io.Reader) error
 }
 
-// Connect sends a CONNECT packet over the transport. This is the first packet expected by a server.
-// Connect returns the result of the interaction, with vconnack holding the server's return code.
-// If the server
-func (c *Client) Connect(vc *VariablesConnect) (vconnack VariablesConnack, err error) {
-	if c.ID == "" {
-		return VariablesConnack{}, errors.New("need to define a Client ID")
-	}
-	vc.ClientID = []byte(c.ID)
-	err = c.rxtx.WriteConnect(vc)
-	if err != nil {
-		return VariablesConnack{}, err
-	}
-	previousCallback := c.rxtx.RxCallbacks.OnConnack
-	c.rxtx.RxCallbacks.OnConnack = func(rt *Rx, vc VariablesConnack) error {
-		if vc.ReturnCode != 0 {
-			return errors.New(vc.ReturnCode.String())
+func NewClient(cfg ClientConfig) *Client {
+	var onPub func(rx *Rx, varPub VariablesPublish, r io.Reader) error
+	if cfg.OnPub != nil {
+		onPub = func(rx *Rx, varPub VariablesPublish, r io.Reader) error {
+			return cfg.OnPub(rx.LastReceivedHeader, varPub, r)
 		}
-		c.lastRx = time.Now()
-		vconnack = vc
-		return nil
 	}
-	defer func() { c.rxtx.RxCallbacks.OnConnack = previousCallback }() // reset callback on exit.
-
-	_, err = c.rxtx.ReadNextPacket()
-	gotConnack := c.rxtx.LastReceivedHeader.Type() == PacketConnack
-	if err == nil && !gotConnack {
-		return VariablesConnack{}, errors.New("expected CONNACK response to CONNECT packet")
+	if cfg.Decoder == nil {
+		cfg.Decoder = DecoderNoAlloc{UserBuffer: make([]byte, 4*1024)}
 	}
-	return vconnack, err
+	c := &Client{cs: clientState{closeErr: errors.New("yet to connect")}}
+	c.rx.RxCallbacks, c.tx.TxCallbacks = c.cs.callbacks(onPub)
+	c.rx.userDecoder = cfg.Decoder
+	return c
 }
 
-func (c *Client) Disconnect() error {
-	if c.lastRx.IsZero() {
-		return errors.New("not connected")
+// HandleNext reads from the wire and decodes MQTT packets.
+// If bytes are read and the decoder fails to read a packet the whole
+// client fails and disconnects.
+// HandleNext only returns an error in the case where the OnPub callback passed
+// in the ClientConfig returns an error or if a packet is malformed.
+// If HandleNext returns an error the client will be in a disconnected state.
+func (c *Client) HandleNext() error {
+	if !c.IsConnected() && c.cs.lastTx.IsZero() {
+		// Client disconnected and not expecting to receive packets back.
+		return errDisconnected
 	}
-	err := c.rxtx.WriteSimple(PacketDisconnect)
-	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-		err = nil              //if EOF or network closed simply exit.
-		c.lastRx = time.Time{} // Set back to zero value indicating no connection.
+	c.rxlock.Lock()
+	defer c.rxlock.Unlock()
+	n, err := c.rx.ReadNextPacket()
+	if err != nil && n != 0 {
+		if c.IsConnected() {
+			c.cs.OnDisconnect(err)
+			c.txlock.Lock()
+			defer c.txlock.Unlock()
+			c.tx.WriteSimple(PacketDisconnect)
+		}
+		return err
 	}
 	return err
 }
 
-// Subscribe sends a SUBSCRIBE packet over the transport.
-func (c *Client) Subscribe(vsub VariablesSubscribe) (suback VariablesSuback, err error) {
+// StartConnect sends a CONNECT packet over the transport and does not wait for a
+// CONNACK response. Client is not guaranteed to be connected after a call to this function.
+func (c *Client) StartConnect(rwc io.ReadWriteCloser, vc *VariablesConnect) error {
+	if c.cs.IsConnected() {
+		return errors.New("already connected; disconnect before connecting")
+	}
+	c.setTransport(rwc)
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	return c.tx.WriteConnect(vc)
+}
+
+// Connect sends a CONNECT packet over the transport and waits for a
+// CONNACK response.
+func (c *Client) Connect(ctx context.Context, rwc io.ReadWriteCloser, vc *VariablesConnect) error {
+	err := c.StartConnect(rwc, vc)
+	if err != nil {
+		return err
+	}
+	backoff := newBackoff()
+	for !c.IsConnected() && ctx.Err() == nil {
+		backoff.Miss()
+		err := c.HandleNext()
+		if err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+// IsConnected returns true if there still has been no disconnect event or an
+// unrecoverable error encountered during decoding.
+// A Connected client may send and receive MQTT messages.
+func (c *Client) IsConnected() bool { return c.cs.IsConnected() }
+
+// Disconnect performs a MQTT disconnect and resets the connection. Future
+// calls to Err will return the argument userErr.
+func (c *Client) Disconnect(userErr error) error {
+	if userErr == nil {
+		panic("nil error argument to Disconnect")
+	}
+	if c.IsConnected() {
+		return errDisconnected
+	}
+	c.cs.OnDisconnect(userErr)
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	err := c.tx.WriteSimple(PacketDisconnect)
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		err = nil //if EOF or network closed simply exit.
+	}
+	c.rx.rxTrp.Close()
+	c.tx.txTrp.Close()
+	return err
+}
+
+// StartSubscribe begins subscription to argument topics.
+func (c *Client) StartSubscribe(vsub VariablesSubscribe) error {
+	if !c.IsConnected() {
+		return errDisconnected
+	}
 	if err := vsub.Validate(); err != nil {
-		return VariablesSuback{}, err
-	}
-	err = c.rxtx.WriteSubscribe(vsub)
-	if err != nil {
-		return VariablesSuback{}, err
-	}
-	previousCallback := c.rxtx.RxCallbacks.OnSuback
-	c.rxtx.RxCallbacks.OnSuback = func(rt *Rx, vs VariablesSuback) error {
-		c.lastRx = time.Now()
-		suback = vs
-		// if previousCallback !
-		return nil
-	}
-	defer func() { c.rxtx.RxCallbacks.OnSuback = previousCallback }() // reset callback on exit.
-
-	_, err = c.rxtx.ReadNextPacket()
-	if err == nil && c.rxtx.LastReceivedHeader.Type() != PacketSuback {
-		return VariablesSuback{}, errors.New("expected SUBACK response to SUBSCRIBE packet")
-	}
-	return suback, err
-}
-
-func (c *Client) PublishPayload(hdr Header, vp VariablesPublish, payload []byte) error {
-	if err := vp.Validate(); err != nil {
 		return err
 	}
-	if hdr.Flags().QoS() != QoS0 {
-		return errors.New("only support QoS0")
+
+	if c.AwaitingSuback() {
+		return errors.New("tried to subscribe while still awaiting suback")
 	}
-	return c.rxtx.WritePublishPayload(hdr, vp, payload)
+	c.cs.pendingSubs = vsub.Copy()
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	return c.tx.WriteSubscribe(vsub)
 }
 
-// SetTransport sets the underlying transport. This allows users to re-open
+// Ping writes a ping packet over the network and blocks until it receives the ping
+// response back. It uses an exponential backoff algorithm to time checks on the
+// status of the ping.
+func (c *Client) Subscribe(ctx context.Context, vsub VariablesSubscribe) error {
+	session := c.ConnectedAt()
+	err := c.StartSubscribe(vsub)
+	if err != nil {
+		return err
+	}
+	backoff := newBackoff()
+	for c.cs.PendingSublen() != 0 && ctx.Err() == nil {
+		if c.ConnectedAt() != session {
+			// Prevent waiting on subscribes from previous connection or during disconnection.
+			return errDisconnected
+		}
+		backoff.Miss()
+		c.HandleNext()
+	}
+	return ctx.Err()
+}
+
+// SubscribedTopics returns list of topics the client succesfully subscribed to.
+func (c *Client) SubscribedTopics() []string {
+	c.cs.mu.Lock()
+	defer c.cs.mu.Unlock()
+	return c.cs.activeSubs
+}
+
+// PublishPayload sends a PUBLISH packet over the network on the topic defined by
+// varPub.
+func (c *Client) PublishPayload(flags PacketFlags, varPub VariablesPublish, payload []byte) error {
+	if !c.IsConnected() {
+		return errDisconnected
+	}
+	if err := varPub.Validate(); err != nil {
+		return err
+	}
+	qos := flags.QoS()
+	if qos != QoS0 {
+		return errors.New("only supports QoS0")
+	}
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	return c.tx.WritePublishPayload(newHeader(PacketPublish, flags, uint32(varPub.Size(qos)+len(payload))), varPub, payload)
+}
+
+// Err returns error indicating the cause of client disconnection.
+func (c *Client) Err() error {
+	return c.cs.Err()
+}
+
+// setTransport sets the underlying transport. This allows users to re-open
 // failed/closed connections on [RxTx] side and resuming communication with server.
-func (c *Client) SetTransport(transport io.ReadWriteCloser) {
-	c.rxtx.SetTransport(transport)
+func (c *Client) setTransport(transport io.ReadWriteCloser) {
+	c.rxlock.Lock()
+	defer c.rxlock.Unlock()
+	c.tx.SetTxTransport(transport)
+	c.rx.SetRxTransport(transport)
 }
 
-// Ping writes a PINGREQ packet over the network and blocks until a packet is received.
-// If an error is encountered during decoding or if the received packet is not a PINGRESP then an error is returned
-func (c *Client) Ping() error {
-	err := c.rxtx.WriteSimple(PacketPingreq)
+// StartPing writes a PINGREQ packet over the network without blocking waiting for response.
+func (c *Client) StartPing() error {
+	if !c.IsConnected() {
+		return errDisconnected
+	}
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	return c.tx.WriteSimple(PacketPingreq)
+}
+
+// Ping writes a ping packet over the network and blocks until it receives the ping
+// response back. It uses an exponential backoff algorithm to time checks on the
+// status of the ping.
+func (c *Client) Ping(ctx context.Context) error {
+	session := c.ConnectedAt()
+	err := c.StartPing()
 	if err != nil {
 		return err
 	}
-	_, err = c.rxtx.ReadNextPacket()
-	if err != nil {
-		return err
+	pingTime := c.cs.PingTime()
+	if pingTime.IsZero() {
+		return nil // Ping completed.
 	}
-	if c.rxtx.LastReceivedHeader.Type() != PacketPingresp {
-		return errors.New("expected PINGRESP response for PINGREQ")
+	backoff := newBackoff()
+	for pingTime == c.cs.PingTime() && ctx.Err() == nil {
+		if c.ConnectedAt() != session {
+			// Prevent waiting on subscribes from previous connection or during disconnection.
+			return errDisconnected
+		}
+		backoff.Miss()
+		c.HandleNext()
 	}
-	return nil
+	return ctx.Err()
 }
 
-// RxTx returns a new RxTx that wraps the transport layer.
-// The returned RxTx uses the client's Decoder as is.
-func (c *Client) RxTx() *RxTx {
-	return c.rxtx.ShallowCopy()
+// AwaitingPingresp checks if a ping sent over the wire had no response received back.
+func (c *Client) AwaitingPingresp() bool { return c.cs.AwaitingPingresp() }
+
+// ConnectedAt returns the time the client managed to succesfully connect. If
+// client is disconnected ConnectedAt returns the zero-value for time.Time.
+func (c *Client) ConnectedAt() time.Time { return c.cs.ConnectedAt() }
+
+// AwaitingSuback checks if a subscribe request sent over the wire had no suback received back.
+func (c *Client) AwaitingSuback() bool { return c.cs.AwaitingSuback() }
+
+func newBackoff() exponentialBackoff {
+	return exponentialBackoff{
+		MaxWait: 500 * time.Millisecond,
+	}
 }
 
-// UnsafeRxTxPointer do not use unless you know what you are doing.
-// Unsafe because it creates shared state regarding the LastReceivedHeader
-// and callbacks. If these are overwritten on callers side they also overwrite the Client's callbacks.
-func (c *Client) UnsafeRxTxPointer() *RxTx {
-	return &c.rxtx
+// exponentialBackoff implements a [Exponential Backoff]
+// delay algorithm to prevent saturation network or processor
+// with failing tasks. An exponentialBackoff with a non-zero MaxWait is ready for use.
+//
+// [Exponential Backoff]: https://en.wikipedia.org/wiki/Exponential_backoff
+type exponentialBackoff struct {
+	// Wait defines the amount of time that Miss will wait on next call.
+	Wait time.Duration
+	// Maximum allowable value for Wait.
+	MaxWait time.Duration
+	// StartWait is the value that Wait takes after a call to Hit.
+	StartWait time.Duration
+	// ExpMinusOne is the shift performed on Wait minus one, so the zero value performs a shift of 1.
+	ExpMinusOne uint32
+}
+
+// Hit sets eb.Wait to the StartWait value.
+func (eb *exponentialBackoff) Hit() {
+	if eb.MaxWait == 0 {
+		panic("MaxWait cannot be zero")
+	}
+	eb.Wait = eb.StartWait
+}
+
+// Miss sleeps for eb.Wait and increases eb.Wait exponentially.
+func (eb *exponentialBackoff) Miss() {
+	const k = 1
+	wait := eb.Wait
+	maxWait := eb.MaxWait
+	exp := eb.ExpMinusOne + 1
+	if maxWait == 0 {
+		panic("MaxWait cannot be zero")
+	}
+	time.Sleep(wait)
+	wait |= time.Duration(k)
+	wait <<= exp
+	if wait > maxWait {
+		wait = maxWait
+	}
+	eb.Wait = wait
 }

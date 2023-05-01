@@ -2,11 +2,54 @@ package mqtt
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"testing"
 )
+
+// NewRxTx creates a new RxTx. Before use user must configure OnX fields by setting a function
+// to perform an action each time a packet is received. After a call to transport.Close()
+// all future calls must return errors until the transport is replaced with [RxTx.SetTransport].
+func NewRxTx(transport io.ReadWriteCloser, decoder Decoder) (*RxTx, error) {
+	if transport == nil || decoder == nil {
+		return nil, errors.New("got nil transport io.ReadWriteCloser or nil Decoder")
+	}
+	cc := &RxTx{
+		Rx: Rx{
+			rxTrp:       transport,
+			userDecoder: decoder,
+		},
+		Tx: Tx{txTrp: transport},
+	}
+	return cc, nil
+}
+
+// RxTx implements a bare minimum MQTT v3.1.1 protocol transport layer handler.
+// If there is an error during read/write of a packet the transport is closed
+// and a new transport must be set with [RxTx.SetTransport].
+// An RxTx will not validate data before encoding, that is up to the caller, it
+// will validate incoming data according to MQTT's specification. Malformed packets
+// will be rejected and the connection will be closed immediately with a call to [RxTx.OnError].
+type RxTx struct {
+	Tx
+	Rx
+}
+
+// ShallowCopy shallow copies rxtx and underlying transports and encoders/decoders. Does not copy callbacks over.
+func (rxtx *RxTx) ShallowCopy() *RxTx {
+	return &RxTx{
+		Tx: *rxtx.Tx.ShallowCopy(),
+		Rx: *rxtx.Rx.ShallowCopy(),
+	}
+}
+
+// SetTransport sets the rxtx's reader and writer.
+func (rxtx *RxTx) SetTransport(transport io.ReadWriteCloser) {
+	rxtx.rxTrp = transport
+	rxtx.txTrp = transport
+}
 
 func FuzzRxTxReadNextPacket(f *testing.F) {
 	const maxSize = 1500
