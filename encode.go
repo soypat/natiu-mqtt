@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math"
@@ -14,9 +15,14 @@ func (hdr Header) Encode(w io.Writer) (n int, err error) {
 		return 0, errors.New("remaining length too large for MQTT v3.1.1 spec")
 	}
 	var headerBuf [5]byte
-	headerBuf[0] = hdr.firstByte
-	n = encodeRemainingLength(hdr.RemainingLength, headerBuf[1:])
-	return writeFull(w, headerBuf[:n+1])
+	n = hdr.Put(headerBuf[:])
+	return writeFull(w, headerBuf[:n])
+}
+
+func (hdr Header) Put(buf []byte) int {
+	_ = buf[4]
+	buf[0] = hdr.firstByte
+	return encodeRemainingLength(hdr.RemainingLength, buf[1:]) + 1
 }
 
 func encodeMQTTString(w io.Writer, s []byte) (int, error) {
@@ -150,8 +156,7 @@ func encodeByte(w io.Writer, value byte) (n int, err error) {
 
 func encodeUint16(w io.Writer, value uint16) (n int, err error) {
 	var vbuf [2]byte
-	vbuf[0] = byte(value >> 8)
-	vbuf[1] = byte(value)
+	binary.BigEndian.PutUint16(vbuf[:], value)
 	return writeFull(w, vbuf[:])
 }
 
