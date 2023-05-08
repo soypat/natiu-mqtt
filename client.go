@@ -54,13 +54,7 @@ func NewClient(cfg ClientConfig) *Client {
 // in the ClientConfig returns an error or if a packet is malformed.
 // If HandleNext returns an error the client will be in a disconnected state.
 func (c *Client) HandleNext() error {
-	if !c.IsConnected() && c.cs.lastTx.IsZero() {
-		// Client disconnected and not expecting to receive packets back.
-		return errDisconnected
-	}
-	c.rxlock.Lock()
-	defer c.rxlock.Unlock()
-	n, err := c.rx.ReadNextPacket()
+	n, err := c.readNextWrapped()
 	if err != nil && n != 0 {
 		if c.IsConnected() {
 			c.cs.OnDisconnect(err)
@@ -73,15 +67,29 @@ func (c *Client) HandleNext() error {
 	return err
 }
 
+// readNextWrapped is a separate function so mutex locks Rx for minimum amount of time.
+func (c *Client) readNextWrapped() (int, error) {
+	c.rxlock.Lock()
+	defer c.rxlock.Unlock()
+	if !c.IsConnected() && c.cs.lastTx.IsZero() {
+		// Client disconnected and not expecting to receive packets back.
+		return 0, errDisconnected
+	}
+	return c.rx.ReadNextPacket()
+}
+
 // StartConnect sends a CONNECT packet over the transport and does not wait for a
 // CONNACK response. Client is not guaranteed to be connected after a call to this function.
 func (c *Client) StartConnect(rwc io.ReadWriteCloser, vc *VariablesConnect) error {
+	c.rxlock.Lock()
+	defer c.rxlock.Unlock()
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	c.tx.SetTxTransport(rwc)
+	c.rx.SetRxTransport(rwc)
 	if c.cs.IsConnected() {
 		return errors.New("already connected; disconnect before connecting")
 	}
-	c.setTransport(rwc)
-	c.txlock.Lock()
-	defer c.txlock.Unlock()
 	return c.tx.WriteConnect(vc)
 }
 
@@ -114,12 +122,12 @@ func (c *Client) Disconnect(userErr error) error {
 	if userErr == nil {
 		panic("nil error argument to Disconnect")
 	}
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
 	if !c.IsConnected() {
 		return errDisconnected
 	}
 	c.cs.OnDisconnect(userErr)
-	c.txlock.Lock()
-	defer c.txlock.Unlock()
 	err := c.tx.WriteSimple(PacketDisconnect)
 	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		err = nil //if EOF or network closed simply exit.
@@ -133,19 +141,18 @@ func (c *Client) Disconnect(userErr error) error {
 
 // StartSubscribe begins subscription to argument topics.
 func (c *Client) StartSubscribe(vsub VariablesSubscribe) error {
-	if !c.IsConnected() {
-		return errDisconnected
-	}
 	if err := vsub.Validate(); err != nil {
 		return err
 	}
-
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+	if !c.IsConnected() {
+		return errDisconnected
+	}
 	if c.AwaitingSuback() {
 		return errors.New("tried to subscribe while still awaiting suback")
 	}
 	c.cs.pendingSubs = vsub.Copy()
-	c.txlock.Lock()
-	defer c.txlock.Unlock()
 	return c.tx.WriteSubscribe(vsub)
 }
 
@@ -180,9 +187,6 @@ func (c *Client) SubscribedTopics() []string {
 // PublishPayload sends a PUBLISH packet over the network on the topic defined by
 // varPub.
 func (c *Client) PublishPayload(flags PacketFlags, varPub VariablesPublish, payload []byte) error {
-	if !c.IsConnected() {
-		return errDisconnected
-	}
 	if err := varPub.Validate(); err != nil {
 		return err
 	}
@@ -192,6 +196,9 @@ func (c *Client) PublishPayload(flags PacketFlags, varPub VariablesPublish, payl
 	}
 	c.txlock.Lock()
 	defer c.txlock.Unlock()
+	if !c.IsConnected() {
+		return errDisconnected
+	}
 	return c.tx.WritePublishPayload(newHeader(PacketPublish, flags, uint32(varPub.Size(qos)+len(payload))), varPub, payload)
 }
 
@@ -205,17 +212,18 @@ func (c *Client) Err() error {
 func (c *Client) setTransport(transport io.ReadWriteCloser) {
 	c.rxlock.Lock()
 	defer c.rxlock.Unlock()
-	c.tx.SetTxTransport(transport)
-	c.rx.SetRxTransport(transport)
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
+
 }
 
 // StartPing writes a PINGREQ packet over the network without blocking waiting for response.
 func (c *Client) StartPing() error {
+	c.txlock.Lock()
+	defer c.txlock.Unlock()
 	if !c.IsConnected() {
 		return errDisconnected
 	}
-	c.txlock.Lock()
-	defer c.txlock.Unlock()
 	return c.tx.WriteSimple(PacketPingreq)
 }
 
