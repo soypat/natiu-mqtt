@@ -3,6 +3,7 @@ package mqtt_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -114,7 +115,7 @@ func ExampleClient() {
 
 	// Get a transport for MQTT packets.
 	const defaultMQTTPort = ":1883"
-	conn, err := net.Dial("tcp", "127.0.0.1"+defaultMQTTPort)
+	conn, err := net.Dial("tcp", "test.mosquitto.org"+defaultMQTTPort)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -130,19 +131,26 @@ func ExampleClient() {
 		// Error or loop until connect success.
 		log.Fatalf("connect attempt failed: %v\n", err)
 	}
+	fmt.Println("connection success")
+
+	defer func() {
+		err := client.Disconnect(errors.New("end of test"))
+		if err != nil {
+			fmt.Println("disconnect failed:", err)
+		}
+	}()
 
 	// Ping forever until error.
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		pingErr := client.Ping(ctx)
-		cancel()
-		if pingErr != nil {
-			log.Fatal("ping error: ", pingErr, " with disconnect reason:", client.Err())
-		}
-		log.Println("ping success!")
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	pingErr := client.Ping(ctx)
+	cancel()
+	if pingErr != nil {
+		log.Fatal("ping error: ", pingErr, " with disconnect reason:", client.Err())
 	}
+	fmt.Println("ping success!")
 	// Output:
-	// dial tcp 127.0.0.1:1883: connect: connection refused
+	// connection success
+	// ping success!
 }
 
 func ExampleRxTx() {

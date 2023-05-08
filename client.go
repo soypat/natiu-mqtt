@@ -114,7 +114,7 @@ func (c *Client) Disconnect(userErr error) error {
 	if userErr == nil {
 		panic("nil error argument to Disconnect")
 	}
-	if c.IsConnected() {
+	if !c.IsConnected() {
 		return errDisconnected
 	}
 	c.cs.OnDisconnect(userErr)
@@ -124,6 +124,8 @@ func (c *Client) Disconnect(userErr error) error {
 	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		err = nil //if EOF or network closed simply exit.
 	}
+	c.rxlock.Lock()
+	defer c.rxlock.Unlock()
 	c.rx.rxTrp.Close()
 	c.tx.txTrp.Close()
 	return err
