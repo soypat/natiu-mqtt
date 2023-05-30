@@ -178,10 +178,11 @@ func (c *Client) Subscribe(ctx context.Context, vsub VariablesSubscribe) error {
 }
 
 // SubscribedTopics returns list of topics the client succesfully subscribed to.
+// Returns a copy of a slice so is safe for concurrent use.
 func (c *Client) SubscribedTopics() []string {
 	c.cs.mu.Lock()
 	defer c.cs.mu.Unlock()
-	return c.cs.activeSubs
+	return append([]string{}, c.cs.activeSubs...)
 }
 
 // PublishPayload sends a PUBLISH packet over the network on the topic defined by
@@ -224,7 +225,11 @@ func (c *Client) StartPing() error {
 	if !c.IsConnected() {
 		return errDisconnected
 	}
-	return c.tx.WriteSimple(PacketPingreq)
+	err := c.tx.WriteSimple(PacketPingreq)
+	if err == nil {
+		c.cs.PingSent() // Flag the fact that a ping has been sent succesfully.
+	}
+	return err
 }
 
 // Ping writes a ping packet over the network and blocks until it receives the ping
@@ -236,12 +241,12 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	pingTime := c.cs.PingTime()
+	pingTime := c.cs.LastPingTime()
 	if pingTime.IsZero() {
 		return nil // Ping completed.
 	}
 	backoff := newBackoff()
-	for pingTime == c.cs.PingTime() && ctx.Err() == nil {
+	for pingTime == c.cs.LastPingTime() && ctx.Err() == nil {
 		if c.ConnectedAt() != session {
 			// Prevent waiting on subscribes from previous connection or during disconnection.
 			return errDisconnected
@@ -260,7 +265,17 @@ func (c *Client) AwaitingPingresp() bool { return c.cs.AwaitingPingresp() }
 func (c *Client) ConnectedAt() time.Time { return c.cs.ConnectedAt() }
 
 // AwaitingSuback checks if a subscribe request sent over the wire had no suback received back.
+// Returns false if client is disconnected.
 func (c *Client) AwaitingSuback() bool { return c.cs.AwaitingSuback() }
+
+// LastRx returns the time the last packet was received at.
+// If Client is disconnected LastRx returns the zero value of time.Time.
+func (c *Client) LastRx() time.Time { return c.cs.LastRx() }
+
+// LastTx returns the time the last succesful packet transmission finished at.
+// A "succesful" transmission does not necessarily mean the packet was received on the other end.
+// If Client is disconnected LastTx returns the zero value of time.Time.
+func (c *Client) LastTx() time.Time { return c.cs.LastTx() }
 
 func newBackoff() exponentialBackoff {
 	return exponentialBackoff{

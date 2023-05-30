@@ -8,15 +8,18 @@ import (
 )
 
 type clientState struct {
-	mu             sync.Mutex
-	lastRx         time.Time
-	lastTx         time.Time
-	connectedAt    time.Time
-	pendingSubs    VariablesSubscribe
-	activeSubs     []string
+	mu          sync.Mutex
+	lastRx      time.Time
+	lastTx      time.Time
+	connectedAt time.Time
+	activeSubs  []string
+	// field flag indicates we received a ping request from server and need to reply.
 	pendingPingreq time.Time
+	// field flags we are waiting on a ping response packet from server.
+	pendingPingresp time.Time
 	// closeErr stores the reason for disconnection.
-	closeErr error
+	closeErr    error
+	pendingSubs VariablesSubscribe
 }
 
 // onConnect is meant to be called on opening a new connection to delete
@@ -29,33 +32,34 @@ func (cs *clientState) onConnect(t time.Time) {
 	cs.activeSubs = cs.activeSubs[:0]
 	cs.lastRx = t
 	cs.connectedAt = t
-	cs.pendingPingreq = time.Time{}
 	cs.pendingSubs = VariablesSubscribe{}
 }
 
 // onConnect is meant to be called on opening a new connection to delete
 // previous connection state.
 func (cs *clientState) OnDisconnect(err error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.onDisconnect(err)
+}
+
+//go:inline
+func (cs *clientState) onDisconnect(err error) {
 	if err == nil {
 		panic("onDisconnect expects non-nil error")
 	}
-	cs.mu.Lock()
 	cs.closeErr = err
 	cs.connectedAt = time.Time{}
 	cs.lastRx = time.Time{}
 	cs.lastTx = time.Time{}
-	cs.mu.Unlock()
+	cs.pendingPingreq = time.Time{}
+	cs.pendingPingresp = time.Time{}
+	cs.pendingSubs = VariablesSubscribe{}
 }
 
 // callbacks returns the Rx and Tx callbacks necessary for a clientState to function automatically.
 // The onPub callback
 func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r io.Reader) error) (RxCallbacks, TxCallbacks) {
-	closeConn := func(err error) {
-		cs.mu.Lock()
-		defer cs.mu.Unlock()
-		cs.connectedAt = time.Time{}
-		cs.closeErr = err
-	}
 	return RxCallbacks{
 			OnConnack: func(r *Rx, vc VariablesConnack) error {
 				connTime := time.Now()
@@ -99,25 +103,26 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 				cs.lastRx = rxTime
 				switch tp {
 				case PacketDisconnect:
-					cs.connectedAt = time.Time{}
-					err = errors.New("received graceful disconnect request")
+					err = errDisconnected
 				case PacketPingreq:
 					cs.pendingPingreq = rxTime
+				case PacketPingresp:
+					cs.pendingPingresp = time.Time{} // got the response, we can unflag.
 				default:
 					println("unexpected packet type: ", tp.String())
 				}
 				if err != nil {
-					cs.closeErr = err
+					cs.onDisconnect(err)
 				}
 				return err
 			},
 			OnRxError: func(r *Rx, err error) {
-				closeConn(err)
+				cs.onDisconnect(err)
 			},
 			// OnOther: ,
 		}, TxCallbacks{
 			OnTxError: func(tx *Tx, err error) {
-				closeConn(err)
+				cs.onDisconnect(err)
 			},
 			OnSuccessfulTx: func(tx *Tx) {
 				cs.mu.Lock()
@@ -158,7 +163,7 @@ func (cs *clientState) PendingResponse() bool {
 func (cs *clientState) AwaitingPingresp() bool {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	return !cs.pendingPingreq.IsZero()
+	return !cs.pendingPingresp.IsZero()
 }
 
 func (cs *clientState) AwaitingSuback() bool {
@@ -182,10 +187,10 @@ func (cs *clientState) RegisterSubscribe(vsub VariablesSubscribe) error {
 	cs.pendingSubs = vsub.Copy()
 	return nil
 }
-func (cs *clientState) PingTime() time.Time {
+func (cs *clientState) LastPingTime() time.Time {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	return cs.pendingPingreq
+	return cs.pendingPingresp
 }
 
 func (cs *clientState) PendingSublen() int {
@@ -198,4 +203,22 @@ func (cs *clientState) ConnectedAt() time.Time {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	return cs.connectedAt
+}
+
+func (cs *clientState) LastTx() time.Time {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.lastTx
+}
+
+func (cs *clientState) PingSent() {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.pendingPingresp = time.Now()
+}
+
+func (cs *clientState) LastRx() time.Time {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.lastRx
 }
