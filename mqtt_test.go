@@ -2,12 +2,66 @@ package mqtt
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"testing"
+	"time"
 )
+
+const TCPServer = "test.mosquitto.org:1883"
+
+func TestMQTTConnect(t *testing.T) {
+	const (
+		clientID    = "natiu-test"
+		topic       = "abc"
+		payload     = "hello world!"
+		testTimeout = 3 * time.Second
+	)
+	tcpaddr, err := net.ResolveTCPAddr("tcp", TCPServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTCP("tcp", nil, tcpaddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewClient(ClientConfig{OnPub: func(pubHead Header, varPub VariablesPublish, r io.Reader) error {
+		t.Log(pubHead, varPub)
+		return nil
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	var varconn VariablesConnect
+	varconn.SetDefaultMQTT([]byte(clientID))
+	err = c.Connect(ctx, conn, &varconn)
+	if err != nil {
+		t.Error(err)
+	}
+	pid := (uint16(time.Now().UnixMilli()) % 512) + 2 // Ensure packet ID greater than 1 that cant overflow.
+	err = c.Subscribe(ctx, VariablesSubscribe{
+		PacketIdentifier: pid,
+		TopicFilters: []SubscribeRequest{{
+			TopicFilter: []byte(topic),
+			QoS:         QoS0,
+		}},
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	flags, _ := NewPublishFlags(QoS0, false, false)
+	varPub := VariablesPublish{
+		TopicName:        []byte(topic),
+		PacketIdentifier: pid + 1,
+	}
+	err = c.PublishPayload(flags, varPub, []byte(payload))
+	if err != nil {
+		t.Error(err)
+	}
+}
 
 // NewRxTx creates a new RxTx. Before use user must configure OnX fields by setting a function
 // to perform an action each time a packet is received. After a call to transport.Close()
