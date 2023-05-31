@@ -14,7 +14,7 @@ import (
 // If there is an error after reading the first byte of a packet the transport is closed
 // and a new transport must be set with [Rx.SetRxTransport].
 // If OnRxError is set the underlying transport is not automatically closed and
-// it becomes the callback's responsability to close the transport.
+// it becomes the callback's responsibility to close the transport.
 //
 //	Not safe for concurrent use.
 type Rx struct {
@@ -122,7 +122,7 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 			break
 		}
 		var vc VariablesConnack
-		vc, ngot, err = rx.dec.DecodeConnack(rx.rxTrp)
+		vc, ngot, err = decodeConnack(rx.rxTrp)
 		n += ngot
 		if err != nil {
 			break
@@ -152,7 +152,7 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 			break
 		}
 		var vsbck VariablesSuback
-		vsbck, ngot, err = rx.dec.DecodeSuback(rx.rxTrp, hdr.RemainingLength)
+		vsbck, ngot, err = decodeSuback(rx.rxTrp, hdr.RemainingLength)
 		n += ngot
 		if err != nil {
 			break
@@ -248,7 +248,7 @@ func (rx *Rx) exhaustReader(r io.Reader) (err error) {
 // and a new transport must be set with [Tx.SetTxTransport].
 // A Tx will not validate data before encoding, that is up to the caller, Malformed packets
 // will be rejected and the connection will be closed immediately. If OnTxError is
-// set then the underlying transport is not closed and it becomes responsability
+// set then the underlying transport is not closed and it becomes responsibility
 // of the callback to close the transport.
 type Tx struct {
 	txTrp       io.WriteCloser

@@ -13,8 +13,8 @@ var (
 	errDisconnected = errors.New("natiu-mqtt: disconnected")
 )
 
-// Client is a asynchronous MQTT v3.1.1 client implementation.
-// The first field of the Client type will always be the RxTx non-pointer type.
+// Client is a asynchronous MQTT v3.1.1 client implementation which is
+// safe for concurrent use.
 type Client struct {
 	cs     clientState
 	txlock sync.Mutex
@@ -23,14 +23,18 @@ type Client struct {
 	tx     Tx
 }
 
+// ClientConfig is used to configure a new Client.
 type ClientConfig struct {
 	// If a Decoder is not set one will automatically be picked.
 	Decoder Decoder
 	// OnPub is executed on every PUBLISH message received. Do not call
 	// HandleNext or other client methods from within this function.
 	OnPub func(pubHead Header, varPub VariablesPublish, r io.Reader) error
+	// TODO: add a backoff algorithm callback here so clients can roll their own.
 }
 
+// NewClient creates a new MQTT client with the configuration parameters provided.
+// If no Decoder is provided a DecoderNoAlloc will be used.
 func NewClient(cfg ClientConfig) *Client {
 	var onPub func(rx *Rx, varPub VariablesPublish, r io.Reader) error
 	if cfg.OnPub != nil {
@@ -94,7 +98,7 @@ func (c *Client) StartConnect(rwc io.ReadWriteCloser, vc *VariablesConnect) erro
 }
 
 // Connect sends a CONNECT packet over the transport and waits for a
-// CONNACK response.
+// CONNACK response from the server. The client is connected if the returned error is nil.
 func (c *Client) Connect(ctx context.Context, rwc io.ReadWriteCloser, vc *VariablesConnect) error {
 	err := c.StartConnect(rwc, vc)
 	if err != nil {
@@ -107,6 +111,9 @@ func (c *Client) Connect(ctx context.Context, rwc io.ReadWriteCloser, vc *Variab
 		if err != nil {
 			return err
 		}
+	}
+	if c.IsConnected() {
+		return nil
 	}
 	return ctx.Err()
 }
@@ -150,15 +157,15 @@ func (c *Client) StartSubscribe(vsub VariablesSubscribe) error {
 		return errDisconnected
 	}
 	if c.AwaitingSuback() {
+		// TODO(soypat): Allow multiple subscriptions to be queued.
 		return errors.New("tried to subscribe while still awaiting suback")
 	}
 	c.cs.pendingSubs = vsub.Copy()
 	return c.tx.WriteSubscribe(vsub)
 }
 
-// Ping writes a ping packet over the network and blocks until it receives the ping
-// response back. It uses an exponential backoff algorithm to time checks on the
-// status of the ping.
+// Subscribe writes a SUBSCRIBE packet over the network and waits for the server
+// to respond with a SUBACK packet or until the context ends.
 func (c *Client) Subscribe(ctx context.Context, vsub VariablesSubscribe) error {
 	session := c.ConnectedAt()
 	err := c.StartSubscribe(vsub)
@@ -177,7 +184,7 @@ func (c *Client) Subscribe(ctx context.Context, vsub VariablesSubscribe) error {
 	return ctx.Err()
 }
 
-// SubscribedTopics returns list of topics the client succesfully subscribed to.
+// SubscribedTopics returns list of topics the client successfully subscribed to.
 // Returns a copy of a slice so is safe for concurrent use.
 func (c *Client) SubscribedTopics() []string {
 	c.cs.mu.Lock()
@@ -208,16 +215,6 @@ func (c *Client) Err() error {
 	return c.cs.Err()
 }
 
-// setTransport sets the underlying transport. This allows users to re-open
-// failed/closed connections on [RxTx] side and resuming communication with server.
-func (c *Client) setTransport(transport io.ReadWriteCloser) {
-	c.rxlock.Lock()
-	defer c.rxlock.Unlock()
-	c.txlock.Lock()
-	defer c.txlock.Unlock()
-
-}
-
 // StartPing writes a PINGREQ packet over the network without blocking waiting for response.
 func (c *Client) StartPing() error {
 	c.txlock.Lock()
@@ -227,7 +224,7 @@ func (c *Client) StartPing() error {
 	}
 	err := c.tx.WriteSimple(PacketPingreq)
 	if err == nil {
-		c.cs.PingSent() // Flag the fact that a ping has been sent succesfully.
+		c.cs.PingSent() // Flag the fact that a ping has been sent successfully.
 	}
 	return err
 }
@@ -260,7 +257,7 @@ func (c *Client) Ping(ctx context.Context) error {
 // AwaitingPingresp checks if a ping sent over the wire had no response received back.
 func (c *Client) AwaitingPingresp() bool { return c.cs.AwaitingPingresp() }
 
-// ConnectedAt returns the time the client managed to succesfully connect. If
+// ConnectedAt returns the time the client managed to successfully connect. If
 // client is disconnected ConnectedAt returns the zero-value for time.Time.
 func (c *Client) ConnectedAt() time.Time { return c.cs.ConnectedAt() }
 
@@ -272,8 +269,8 @@ func (c *Client) AwaitingSuback() bool { return c.cs.AwaitingSuback() }
 // If Client is disconnected LastRx returns the zero value of time.Time.
 func (c *Client) LastRx() time.Time { return c.cs.LastRx() }
 
-// LastTx returns the time the last succesful packet transmission finished at.
-// A "succesful" transmission does not necessarily mean the packet was received on the other end.
+// LastTx returns the time the last successful packet transmission finished at.
+// A "successful" transmission does not necessarily mean the packet was received on the other end.
 // If Client is disconnected LastTx returns the zero value of time.Time.
 func (c *Client) LastTx() time.Time { return c.cs.LastTx() }
 

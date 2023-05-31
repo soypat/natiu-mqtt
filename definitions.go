@@ -107,6 +107,7 @@ const (
 
 // ConnectReturnCode represents the CONNACK return code, which is the second byte in the variable header.
 // It indicates if the connection was successful (0 value) or if the connection attempt failed on the server side.
+// ConnectReturnCode also implements the error interface and can be returned on a failed connection.
 type ConnectReturnCode uint8
 
 const (
@@ -119,15 +120,5 @@ const (
 	minInvalidReturnCode
 )
 
-type wrapErr struct {
-	msg    string
-	suberr []error
-}
-
-func (w *wrapErr) Error() string {
-	return w.msg + " (wraps various errors)"
-}
-
-func (w *wrapErr) Unwrap() []error {
-	return w.suberr
-}
+// Error implements the error interface for a non-zero return code.
+func (rc ConnectReturnCode) Error() string { return rc.String() }

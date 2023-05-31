@@ -94,21 +94,6 @@ func (d DecoderNoAlloc) DecodeConnect(r io.Reader) (varConn VariablesConnect, n 
 	return varConn, n, nil
 }
 
-// DecodeConnack implements [Decoder] interface. It is the responsibility of the caller
-// to handle a non-zero [ConnectReturnCode].
-func (d DecoderNoAlloc) DecodeConnack(r io.Reader) (VariablesConnack, int, error) {
-	var buf [2]byte
-	n, err := readFull(r, buf[:])
-	if err != nil {
-		return VariablesConnack{}, n, err
-	}
-	varConnack := VariablesConnack{AckFlags: buf[0], ReturnCode: ConnectReturnCode(buf[1])}
-	if err = varConnack.validate(); err != nil {
-		return VariablesConnack{}, n, err
-	}
-	return varConnack, n, nil
-}
-
 // DecodePublish implements [Decoder] interface.
 func (d DecoderNoAlloc) DecodePublish(r io.Reader, qos QoSLevel) (_ VariablesPublish, n int, err error) {
 	topic, n, err := decodeMQTTString(r, d.UserBuffer)
@@ -152,23 +137,6 @@ func (d DecoderNoAlloc) DecodeSubscribe(r io.Reader, remainingLen uint32) (varSu
 	return varSub, n, nil
 }
 
-// DecodeSuback implements [Decoder] interface.
-func (d DecoderNoAlloc) DecodeSuback(r io.Reader, remainingLen uint32) (varSuback VariablesSuback, n int, err error) {
-	varSuback.PacketIdentifier, n, err = decodeUint16(r)
-	if err != nil {
-		return VariablesSuback{}, n, err
-	}
-	for n < int(remainingLen) {
-		qos, err := decodeByte(r)
-		if err != nil {
-			return VariablesSuback{}, n, err
-		}
-		n++
-		varSuback.ReturnCodes = append(varSuback.ReturnCodes, QoSLevel(qos))
-	}
-	return varSuback, n, nil
-}
-
 // DecodeUnsubscribe implements [Decoder] interface.
 func (d DecoderNoAlloc) DecodeUnsubscribe(r io.Reader, remainingLength uint32) (varUnsub VariablesUnsubscribe, n int, err error) {
 	payloadDst := d.UserBuffer
@@ -186,6 +154,37 @@ func (d DecoderNoAlloc) DecodeUnsubscribe(r io.Reader, remainingLength uint32) (
 		varUnsub.Topics = append(varUnsub.Topics, coldTopic)
 	}
 	return varUnsub, n, nil
+}
+
+// decodeConnack decodes a connack packet. It is the responsibility of the caller to handle a non-zero [ConnectReturnCode].
+func decodeConnack(r io.Reader) (VariablesConnack, int, error) {
+	var buf [2]byte
+	n, err := readFull(r, buf[:])
+	if err != nil {
+		return VariablesConnack{}, n, err
+	}
+	varConnack := VariablesConnack{AckFlags: buf[0], ReturnCode: ConnectReturnCode(buf[1])}
+	if err = varConnack.validate(); err != nil {
+		return VariablesConnack{}, n, err
+	}
+	return varConnack, n, nil
+}
+
+// decodeSuback decodes a SUBACK packet.
+func decodeSuback(r io.Reader, remainingLen uint32) (varSuback VariablesSuback, n int, err error) {
+	varSuback.PacketIdentifier, n, err = decodeUint16(r)
+	if err != nil {
+		return VariablesSuback{}, n, err
+	}
+	for n < int(remainingLen) {
+		qos, err := decodeByte(r)
+		if err != nil {
+			return VariablesSuback{}, n, err
+		}
+		n++
+		varSuback.ReturnCodes = append(varSuback.ReturnCodes, QoSLevel(qos))
+	}
+	return varSuback, n, nil
 }
 
 // decodeRemainingLength decodes the Remaining Length variable length integer

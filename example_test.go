@@ -87,7 +87,7 @@ func ExampleClient_concurrent() {
 			}
 			message := <-txQueue
 			varPub.PacketIdentifier = uint16(rand.Int())
-			// Loop until message is sent succesfully. This guarantees
+			// Loop until message is sent successfully. This guarantees
 			// all messages are sent, even in events of disconnect.
 			for {
 				err := client.PublishPayload(pubFlags, varPub, message)

@@ -5,10 +5,12 @@ import (
 	"strings"
 )
 
-// Subscriptions provides clients and servers with a way to manage requested
-// topic published messages. Subscriptions is an abstraction over state, not
+// Subscriptions is a WIP.
+
+// subscriptions provides clients and servers with a way to manage requested
+// topic published messages. subscriptions is an abstraction over state, not
 // input/output operations, so calls to Subscribe should not write bytes over a transport.
-type Subscriptions interface {
+type subscriptions interface {
 	// Subscribe takes a []byte slice to make it explicit and abundantly clear that
 	// Subscriptions is in charge of the memory corresponding to subscription topics.
 	// This is to say that Subscriptions should copy topic contents into its own memory
@@ -26,13 +28,13 @@ type Subscriptions interface {
 
 // TODO(soypat): Add AVL tree implementation like the one in github.com/soypat/go-canard, supposedly is best data structure for this [citation needed].
 
-var _ Subscriptions = SubscriptionsMap{}
+var _ subscriptions = subscriptionsMap{}
 
-// SubscriptionsMap implements Subscriptions interface with a map.
+// subscriptionsMap implements Subscriptions interface with a map.
 // It performs allocations.
-type SubscriptionsMap map[string]struct{}
+type subscriptionsMap map[string]struct{}
 
-func (sm SubscriptionsMap) Subscribe(topic []byte) error {
+func (sm subscriptionsMap) Subscribe(topic []byte) error {
 	tp := string(topic)
 	if _, ok := sm[tp]; ok {
 		return errors.New("topic already exists in subscriptions")
@@ -41,15 +43,15 @@ func (sm SubscriptionsMap) Subscribe(topic []byte) error {
 	return nil
 }
 
-func (sm SubscriptionsMap) Unsubscribe(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
+func (sm subscriptionsMap) Unsubscribe(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
 	return sm.match(topicFilter, userBuffer, true)
 }
 
-func (sm SubscriptionsMap) Match(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
+func (sm subscriptionsMap) Match(topicFilter string, userBuffer []byte) (matched [][]byte, err error) {
 	return sm.match(topicFilter, userBuffer, false)
 }
 
-func (sm SubscriptionsMap) match(topicFilter string, userBuffer []byte, deleteMatches bool) (matched [][]byte, err error) {
+func (sm subscriptionsMap) match(topicFilter string, userBuffer []byte, deleteMatches bool) (matched [][]byte, err error) {
 	n := 0 // Bytes copied into userBuffer.
 	filterParts := strings.Split(topicFilter, "/")
 	if err := validateWildcards(filterParts); err != nil {

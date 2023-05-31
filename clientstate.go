@@ -70,7 +70,7 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 					return errors.New("connack received while connected")
 				}
 				if vc.ReturnCode != 0 {
-					return errors.New(vc.ReturnCode.String())
+					return vc.ReturnCode
 				}
 				cs.onConnect(connTime)
 				return nil
@@ -119,7 +119,6 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 			OnRxError: func(r *Rx, err error) {
 				cs.onDisconnect(err)
 			},
-			// OnOther: ,
 		}, TxCallbacks{
 			OnTxError: func(tx *Tx, err error) {
 				cs.onDisconnect(err)
