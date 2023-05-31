@@ -16,10 +16,12 @@ var (
 // Client is a asynchronous MQTT v3.1.1 client implementation which is
 // safe for concurrent use.
 type Client struct {
-	cs     clientState
-	txlock sync.Mutex
+	cs clientState
+
 	rxlock sync.Mutex
 	rx     Rx
+
+	txlock sync.Mutex
 	tx     Tx
 }
 

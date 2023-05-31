@@ -18,19 +18,17 @@ import (
 //
 //	Not safe for concurrent use.
 type Rx struct {
-	// LastReceivedHeader contains the last correctly read header.
-	LastReceivedHeader Header
 	// Transport over which packets are read and written to.
 	// Not exported since RxTx type might be composed of embedded Rx and Tx types in future. TBD.
 	rxTrp       io.ReadCloser
 	RxCallbacks RxCallbacks
 	// User defined decoder for allocating packets.
 	userDecoder Decoder
-	// Default decoder for non allocating packets.
-	dec DecoderNoAlloc
 	// ScratchBuf is lazily allocated to exhaust Publish payloads when received and no
 	// OnPub callback is set.
 	ScratchBuf []byte
+	// LastReceivedHeader contains the last correctly read header.
+	LastReceivedHeader Header
 }
 
 // RxCallbacks groups all functionality executed on data receipt, both successful
