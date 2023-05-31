@@ -10,19 +10,19 @@ import (
 
 // Encode encodes the header into the argument writer. It will encode up to a maximum
 // of 7 bytes, which is the max length header in MQTT v3.1.
-func (hdr Header) Encode(w io.Writer) (n int, err error) {
-	if hdr.RemainingLength > maxRemainingLengthValue {
+func (h Header) Encode(w io.Writer) (n int, err error) {
+	if h.RemainingLength > maxRemainingLengthValue {
 		return 0, errors.New("remaining length too large for MQTT v3.1.1 spec")
 	}
 	var headerBuf [5]byte
-	n = hdr.Put(headerBuf[:])
+	n = h.Put(headerBuf[:])
 	return writeFull(w, headerBuf[:n])
 }
 
-func (hdr Header) Put(buf []byte) int {
+func (h Header) Put(buf []byte) int {
 	_ = buf[4]
-	buf[0] = hdr.firstByte
-	return encodeRemainingLength(hdr.RemainingLength, buf[1:]) + 1
+	buf[0] = h.firstByte
+	return encodeRemainingLength(h.RemainingLength, buf[1:]) + 1
 }
 
 func encodeMQTTString(w io.Writer, s []byte) (int, error) {
