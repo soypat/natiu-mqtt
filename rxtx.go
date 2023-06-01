@@ -269,9 +269,9 @@ func (tx *Tx) TxTransport() io.WriteCloser {
 	return tx.txTrp
 }
 
-// SetTxTransport sets the rxtx's reader and writer.
-func (rxtx *Tx) SetTxTransport(transport io.WriteCloser) {
-	rxtx.txTrp = transport
+// SetTxTransport sets the tx's writer.
+func (tx *Tx) SetTxTransport(transport io.WriteCloser) {
+	tx.txTrp = transport
 }
 
 // WriteConnack writes a CONNECT packet over the transport.
