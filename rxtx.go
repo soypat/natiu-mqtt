@@ -30,7 +30,7 @@ type Rx struct {
 	// LastReceivedHeader contains the last correctly read header.
 	LastReceivedHeader Header
 	// LimitedReader field prevents a heap allocation in ReadNext since passing
-	// a LimitedReader into RxCallbacks.OnPub will escape inconditionally.
+	// a stack allocated LimitedReader into RxCallbacks.OnPub will escape inconditionally.
 	packetLimitReader io.LimitedReader
 }
 
