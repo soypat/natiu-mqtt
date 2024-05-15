@@ -29,6 +29,9 @@ type Rx struct {
 	ScratchBuf []byte
 	// LastReceivedHeader contains the last correctly read header.
 	LastReceivedHeader Header
+	// LimitedReader field prevents a heap allocation in ReadNext since passing
+	// a LimitedReader into RxCallbacks.OnPub will escape inconditionally.
+	packetLimitReader io.LimitedReader
 }
 
 // RxCallbacks groups all functionality executed on data receipt, both successful
@@ -43,6 +46,8 @@ type RxCallbacks struct {
 	// and is limited to read the amount of bytes in the payload as given by RemainingLength.
 	// One may calculate amount of bytes in the reader like so:
 	//  payloadLen := rx.LastReceivedHeader.RemainingLength - varPub.Size()
+	// It is important to note the reader `r` will be invalidated on the next incoming publish packet,
+	// calling r after this point will result in undefined behaviour.
 	OnPub func(rx *Rx, varPub VariablesPublish, r io.Reader) error
 	// OnOther takes in the Header of received packet and a packet identifier uint16 if present.
 	// OnOther receives PUBACK, PUBREC, PUBREL, PUBCOMP, UNSUBACK packets containing non-zero packet identfiers
@@ -102,14 +107,14 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 			break
 		}
 		payloadLen := int(hdr.RemainingLength) - ngot
-		lr := io.LimitedReader{R: rx.rxTrp, N: int64(payloadLen)}
+		rx.packetLimitReader = io.LimitedReader{R: rx.rxTrp, N: int64(payloadLen)}
 		if rx.RxCallbacks.OnPub != nil {
-			err = rx.RxCallbacks.OnPub(rx, vp, &lr)
+			err = rx.RxCallbacks.OnPub(rx, vp, &rx.packetLimitReader)
 		} else {
-			err = rx.exhaustReader(&lr)
+			err = rx.exhaustReader(&rx.packetLimitReader)
 		}
 
-		if lr.N != 0 && err == nil {
+		if rx.packetLimitReader.N != 0 && err == nil {
 			err = errors.New("expected OnPub to completely read payload")
 			break
 		}
