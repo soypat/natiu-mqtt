@@ -32,12 +32,14 @@ func ExampleClient_concurrent() {
 			return nil
 		},
 	})
-
+	const TOPICNAME = "/mqttnerds"
 	// Set the connection parameters and set the Client ID to "salamanca".
 	var varConn mqtt.VariablesConnect
 	varConn.SetDefaultMQTT([]byte("salamanca"))
+	rng := rand.New(rand.NewSource(1))
 
 	// Define an inline function that connects the MQTT client automatically.
+	// Is inline so it is contained within example.
 	tryConnect := func() error {
 		// Get a transport for MQTT packets using the local host and default MQTT port (1883).
 		conn, err := net.Dial("tcp", "127.0.0.1:1883")
@@ -46,8 +48,23 @@ func ExampleClient_concurrent() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
-		return client.Connect(ctx, conn, &varConn) // Connect to server.
+		err = client.Connect(ctx, conn, &varConn) // Connect to server.
+		if err != nil {
+			return err
+		}
+
+		// On succesful connection subscribe to topic.
+		ctx, cancel = context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		vsub := mqtt.VariablesSubscribe{
+			TopicFilters: []mqtt.SubscribeRequest{
+				{TopicFilter: []byte(TOPICNAME), QoS: mqtt.QoS0}, // Only support QoS0 for now.
+			},
+			PacketIdentifier: uint16(rng.Int31()),
+		}
+		return client.Subscribe(ctx, vsub)
 	}
+
 	// Attempt first connection and fail immediately if that does not work.
 	err := tryConnect()
 	if err != nil {
@@ -73,7 +90,6 @@ func ExampleClient_concurrent() {
 
 	// Call Write goroutine and create a channel to serialize messages
 	// that we want to send out.
-	const TOPICNAME = "/mqttnerds"
 	pubFlags, _ := mqtt.NewPublishFlags(mqtt.QoS0, false, false)
 	varPub := mqtt.VariablesPublish{
 		TopicName: []byte(TOPICNAME),
@@ -86,7 +102,7 @@ func ExampleClient_concurrent() {
 				continue
 			}
 			message := <-txQueue
-			varPub.PacketIdentifier = uint16(rand.Int())
+			varPub.PacketIdentifier = uint16(rng.Int())
 			// Loop until message is sent successfully. This guarantees
 			// all messages are sent, even in events of disconnect.
 			for {
