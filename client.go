@@ -60,15 +60,13 @@ func NewClient(cfg ClientConfig) *Client {
 // in the ClientConfig returns an error or if a packet is malformed.
 // If HandleNext returns an error the client will be in a disconnected state.
 func (c *Client) HandleNext() error {
-	n, err := c.readNextWrapped()
-	if err != nil && n != 0 {
-		if c.IsConnected() {
-			c.cs.OnDisconnect(err)
-			c.txlock.Lock()
-			defer c.txlock.Unlock()
-			c.tx.WriteSimple(PacketDisconnect)
-		}
-		return err
+	_, err := c.readNextWrapped()
+	if err != nil && c.IsConnected() {
+		// This probably never executes since rxOnError should disconnect client, here for even more guarantees.
+		c.cs.OnDisconnect(err)
+		c.txlock.Lock()
+		c.tx.WriteSimple(PacketDisconnect)
+		c.txlock.Unlock()
 	}
 	return err
 }
