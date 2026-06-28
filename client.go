@@ -23,6 +23,9 @@ type Client struct {
 
 	txlock sync.Mutex
 	tx     Tx
+
+	// _nanotime is the time source. When nil, time.Now().UnixNano() is used.
+	_nanotime func() int64
 }
 
 // ClientConfig is used to configure a new Client.
@@ -33,6 +36,11 @@ type ClientConfig struct {
 	// HandleNext or other client methods from within this function.
 	OnPub func(pubHead Header, varPub VariablesPublish, r io.Reader) error
 	// TODO: add a backoff algorithm callback here so clients can roll their own.
+
+	// Nanotime returns the current time in nanoseconds.
+	// When nil, time.Now().UnixNano() is used.
+	// Useful for deterministic tests that simulate time.
+	Nanotime func() int64
 }
 
 // NewClient creates a new MQTT client with the configuration parameters provided.
@@ -47,7 +55,7 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.Decoder == nil {
 		cfg.Decoder = DecoderNoAlloc{UserBuffer: make([]byte, 4*1024)}
 	}
-	c := &Client{cs: clientState{closeErr: errors.New("yet to connect")}}
+	c := &Client{cs: clientState{closeErr: errors.New("yet to connect")}, _nanotime: cfg.Nanotime}
 	c.rx.RxCallbacks, c.tx.TxCallbacks = c.cs.callbacks(onPub)
 	c.rx.userDecoder = cfg.Decoder
 	return c
@@ -84,7 +92,7 @@ func (c *Client) HandleNext() error {
 func (c *Client) readNextWrapped() (int, error) {
 	c.rxlock.Lock()
 	defer c.rxlock.Unlock()
-	if !c.IsConnected() && c.cs.lastTx.IsZero() {
+	if !c.IsConnected() && c.cs.lastTx == 0 {
 		// Client disconnected and not expecting to receive packets back.
 		return 0, errDisconnected
 	}
@@ -282,6 +290,14 @@ func (c *Client) LastRx() time.Time { return c.cs.LastRx() }
 // A "successful" transmission does not necessarily mean the packet was received on the other end.
 // If Client is disconnected LastTx returns the zero value of time.Time.
 func (c *Client) LastTx() time.Time { return c.cs.LastTx() }
+
+// nanotime returns the current time in nanoseconds using the configured time source.
+func (c *Client) nanotime() int64 {
+	if c._nanotime != nil {
+		return c._nanotime()
+	}
+	return time.Now().UnixNano()
+}
 
 func newBackoff() exponentialBackoff {
 	return exponentialBackoff{
