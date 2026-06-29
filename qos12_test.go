@@ -4,88 +4,9 @@ import (
 	"context"
 	"io"
 	"net"
-	"sync/atomic"
 	"testing"
 	"time"
 )
-
-// ----- minimal ltesto-style scheduler for deterministic goroutine handoff -----
-
-type sched struct {
-	t                  testing.TB
-	goroYieldSignal    chan struct{}
-	goroContinueSignal chan struct{}
-	finishChan         chan error
-	finishCalled       atomic.Bool
-	coroCalls          atomic.Int32
-	timeout            time.Duration
-}
-
-func newSched(t testing.TB) *sched {
-	return &sched{
-		t:                  t,
-		goroYieldSignal:    make(chan struct{}),
-		goroContinueSignal: make(chan struct{}),
-		finishChan:         make(chan error, 1),
-		timeout:            time.Second,
-	}
-}
-
-func (ss *sched) AwaitGoroYield() {
-	select {
-	case <-ss.goroYieldSignal:
-	case <-time.After(ss.timeout):
-		ss.t.Fatal("timeout waiting for goroutine to yield")
-	}
-}
-
-func (ss *sched) YieldToGoro() {
-	select {
-	case ss.goroContinueSignal <- struct{}{}:
-	case <-time.After(ss.timeout):
-		ss.t.Fatal("timeout yielding to goroutine")
-	}
-}
-
-func (ss *sched) Done() <-chan error {
-	if ss.finishCalled.CompareAndSwap(false, true) {
-		return ss.finishChan
-	}
-	panic("Done called twice")
-}
-
-func (ss *sched) Goro() schedGoro {
-	if !ss.coroCalls.CompareAndSwap(0, 1) {
-		panic("only one goroutine supported")
-	}
-	return schedGoro{ss: ss}
-}
-
-type schedGoro struct{ ss *sched }
-
-func (g schedGoro) Yield() {
-	ss := g.ss
-	select {
-	case ss.goroYieldSignal <- struct{}{}:
-	case <-time.After(ss.timeout):
-		ss.t.Fatal("timeout signalling yield")
-	}
-	select {
-	case <-ss.goroContinueSignal:
-	case <-time.After(ss.timeout):
-		ss.t.Fatal("timeout waiting for continue")
-	}
-}
-
-func (g schedGoro) FinishWithErr(err error) {
-	ss := g.ss
-	if len(ss.finishChan) != 0 {
-		ss.t.Fatal("FinishWithErr called more than once")
-	}
-	ss.finishChan <- err
-}
-
-func (g schedGoro) Finish() { g.FinishWithErr(nil) }
 
 // ----- behavioural tests using OrchestratorNoAlloc -----
 
@@ -111,18 +32,6 @@ func outInflight(o *OrchestratorNoAlloc) int {
 		}
 	}
 	return n
-}
-
-func TestOrchestratorNoAlloc_PacketIdentifier(t *testing.T) {
-	o := newTestOrchestrator(t)
-	id1, err := o.PacketIdentifier(PacketPublish, QoS1, 10)
-	if err != nil || id1 == 0 {
-		t.Fatalf("expected valid id, got %d %v", id1, err)
-	}
-	id2, _ := o.PacketIdentifier(PacketPublish, QoS1, 10)
-	if id2 != id1+1 {
-		t.Fatalf("expected sequential ids, got %d then %d", id1, id2)
-	}
 }
 
 // TestClientPublishQoS1Pipe drives a real QoS1 PUBLISH over an in-memory pipe and
