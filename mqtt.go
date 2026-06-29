@@ -85,10 +85,14 @@ func (h Header) HasPacketIdentifier() bool {
 // PacketFlags takes on select values in range 1..15. PacketType and PacketFlags are present in all MQTT packets.
 type PacketFlags uint8
 
+const (
+	qosbits = 0b11 << 1
+)
+
 // QoS returns the PUBLISH QoSLevel in pf which varies between 0..2.
 // PUBREL, UNSUBSCRIBE and SUBSCRIBE packets MUST have QoS1 set by standard.
 // Other packets will have a QoS1 set.
-func (pf PacketFlags) QoS() QoSLevel { return QoSLevel((pf >> 1) & 0b11) }
+func (pf PacketFlags) QoS() QoSLevel { return QoSLevel((qosbits & pf) >> 1) }
 
 // QoS returns true if the PUBLISH Retain bit is set. This typically is set by the client
 // to indicate the packet must be preserved after a Session ends which is to say Retained packets do not form part of Session state.

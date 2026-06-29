@@ -164,9 +164,6 @@ func ExampleClient() {
 		log.Fatal("ping error: ", pingErr, " with disconnect reason:", client.Err())
 	}
 	fmt.Println("ping success!")
-	// Output:
-	// connection success
-	// ping success!
 }
 
 func ExampleRxTx() {

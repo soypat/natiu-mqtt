@@ -177,7 +177,7 @@ func TestQoSOrchestratorHeap_PacketIdentifier(t *testing.T) {
 func TestClientQoS12_PublishQoS1(t *testing.T) {
 	base := NewClient(ClientConfig{})
 	o := &QoSOrchestratorHeap{}
-	_ = NewClientQoS12(base, ClientQoS12Config{Orchestrator: o, DefaultQoS: QoS1})
+	_ = NewClientQoS12(base, ClientQoS12Config{Orchestrator: o})
 
 	// We bypass StartConnect / pipe handshaking for this focused behavioural test.
 	// The goal is to verify that PublishPayload (QoS>0) obtains a PID from the

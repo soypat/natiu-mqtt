@@ -19,8 +19,6 @@ type ClientQoS12Config struct {
 	// Orchestrator handles all QoS1/QoS2 state. Required for QoS>0 operations.
 	Orchestrator QoSOrchestrator
 	// DefaultQoS is the QoS level used for PublishPayload when the caller does
-	// not explicitly specify a QoS via PacketFlags.
-	DefaultQoS QoSLevel
 
 	// Nanotime returns the current time in nanoseconds.
 	// When nil, the underlying Client's time source is used.
@@ -39,9 +37,6 @@ func NewClientQoS12(base *Client, cfg ClientQoS12Config) *ClientQoS12 {
 // is returned immediately.
 func (c *ClientQoS12) PublishPayload(flags PacketFlags, varPub VariablesPublish, payload []byte) error {
 	qos := flags.QoS()
-	if qos == QoS0 {
-		qos = c.cfg.DefaultQoS
-	}
 	if qos == QoS0 {
 		return c.Client.PublishPayload(flags, varPub, payload)
 	}
@@ -73,11 +68,5 @@ func (c *Client) txWritePublish(h Header, varPub VariablesPublish, payload []byt
 
 // WithQoS returns a new PacketFlags with the QoS bits set.
 func (pf PacketFlags) WithQoS(qos QoSLevel) PacketFlags {
-	return (pf &^ 0x06) | PacketFlags(qos<<1)
-}
-
-// nanotime returns the current time in nanoseconds using ClientQoS12's time source if set,
-// otherwise falls back to the embedded Client.
-func (c *ClientQoS12) nanotime() int64 {
-	return c.Client.nanotime()
+	return (pf &^ qosbits) | PacketFlags(qos<<1)
 }

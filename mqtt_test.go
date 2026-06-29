@@ -28,6 +28,7 @@ func TestMQTTConnect(t *testing.T) {
 
 	var now int64
 	nanotime := func() int64 {
+		now++
 		return now
 	}
 	c := NewClient(ClientConfig{
@@ -76,9 +77,7 @@ func TestMQTTConnect(t *testing.T) {
 func runMinimalBroker(t *testing.T, ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	rxtx, _ := NewRxTx(conn, DecoderNoAlloc{UserBuffer: make([]byte, 1024)})
-	rxtx.SetTxTransport(conn)
-	rxtx.SetRxTransport(conn)
-	logf := t.Logf
+	logf := func(string, ...any) {} // t.Logf
 	rxtx.RxCallbacks = RxCallbacks{
 		OnConnect: func(r *Rx, vc *VariablesConnect) error {
 			logf("broker: %s connect", vc.Username)
@@ -88,10 +87,11 @@ func runMinimalBroker(t *testing.T, ctx context.Context, conn net.Conn) {
 			logf("broker: sub to %s", vs.TopicFilters)
 			return rxtx.WriteSuback(VariablesSuback{
 				ReturnCodes:      make([]QoSLevel, len(vs.TopicFilters)),
-				PacketIdentifier: ^vs.PacketIdentifier,
+				PacketIdentifier: vs.PacketIdentifier,
 			})
 		},
 		OnPub: func(rx *Rx, varPub VariablesPublish, r io.Reader) error {
+			io.Copy(io.Discard, r)
 			logf("broker: pub on %s", varPub.TopicName)
 			return nil
 		},
