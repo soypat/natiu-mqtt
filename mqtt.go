@@ -94,6 +94,11 @@ const (
 // Other packets will have a QoS1 set.
 func (pf PacketFlags) QoS() QoSLevel { return QoSLevel((qosbits & pf) >> 1) }
 
+// WithQoS returns a copy of pf with the QoS bits replaced by qos.
+func (pf PacketFlags) WithQoS(qos QoSLevel) PacketFlags {
+	return (pf &^ qosbits) | PacketFlags(qos<<1)
+}
+
 // QoS returns true if the PUBLISH Retain bit is set. This typically is set by the client
 // to indicate the packet must be preserved after a Session ends which is to say Retained packets do not form part of Session state.
 func (pf PacketFlags) Retain() bool { return pf&1 != 0 }

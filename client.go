@@ -40,6 +40,11 @@ type ClientConfig struct {
 	// When nil, time.Now().UnixNano() is used.
 	// Useful for deterministic tests that simulate time.
 	Nanotime func() int64
+
+	// Orchestrator handles all QoS1/QoS2 state (packet identifier allocation,
+	// in-flight tracking, retransmission). It is required for QoS>0 PublishPayload
+	// calls; when nil the Client only supports QoS0.
+	Orchestrator QoSOrchestrator
 }
 
 // NewClient creates a new MQTT client with the configuration parameters provided.
@@ -55,7 +60,7 @@ func NewClient(cfg ClientConfig) *Client {
 		cfg.Decoder = DecoderNoAlloc{UserBuffer: make([]byte, 4*1024)}
 	}
 	c := &Client{
-		cs: clientState{closeErr: errors.New("yet to connect"), _nanotime: cfg.Nanotime},
+		cs: clientState{closeErr: errors.New("yet to connect"), _nanotime: cfg.Nanotime, orchestrator: cfg.Orchestrator},
 	}
 	c.rx.RxCallbacks, c.tx.TxCallbacks = c.cs.callbacks(onPub)
 	c.rx.userDecoder = cfg.Decoder
@@ -86,7 +91,43 @@ func (c *Client) HandleNext() error {
 			err = nil
 		}
 	}
+	if err == nil {
+		// Pump orchestrator-driven wire writes (QoS responses and retransmits).
+		err = c.pumpRetransmits()
+	}
 	return err
+}
+
+// pumpRetransmits drains the QoSOrchestrator's pending wire actions and writes
+// each to the transport. It is a no-op when no orchestrator is configured.
+func (c *Client) pumpRetransmits() error {
+	c.cs.mu.Lock()
+	orch := c.cs.orchestrator
+	c.cs.mu.Unlock()
+	if orch == nil {
+		return nil
+	}
+	for {
+		act, ok := orch.NextRetransmit()
+		if !ok {
+			return nil
+		}
+		c.txlock.Lock()
+		if !c.IsConnected() {
+			c.txlock.Unlock()
+			return errDisconnected
+		}
+		var err error
+		if act.IsControl {
+			err = c.tx.WriteIdentified(act.ControlPacketType, act.ControlPacketID)
+		} else {
+			err = c.tx.WritePublishPayload(act.Header, act.Variables, act.Payload)
+		}
+		c.txlock.Unlock()
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // readNextWrapped is a separate function so mutex locks Rx for minimum amount of time.
@@ -211,21 +252,48 @@ func (c *Client) SubscribedTopics() []string {
 }
 
 // PublishPayload sends a PUBLISH packet over the network on the topic defined by
-// varPub.
+// varPub. For QoS>0 a QoSOrchestrator must have been configured in ClientConfig;
+// it allocates the packet identifier and tracks the message for retransmission.
 func (c *Client) PublishPayload(flags PacketFlags, varPub VariablesPublish, payload []byte) error {
-	if err := varPub.Validate(); err != nil {
+	qos := flags.QoS()
+	if qos == QoS0 {
+		if err := varPub.Validate(); err != nil {
+			return err
+		}
+		h := newHeader(PacketPublish, flags, uint32(varPub.Size(qos)+len(payload)))
+		return c.txWritePublish(h, varPub, payload)
+	}
+	orch := c.cs.orchestrator
+	if orch == nil {
+		return errors.New("QoSOrchestrator required for QoS>0")
+	}
+	// The packet identifier is allocated by the orchestrator, so validate the
+	// topic here and skip Validate's packet-identifier check (which would reject
+	// the not-yet-assigned zero identifier). Done before allocation so an invalid
+	// topic does not leak a reserved in-flight slot.
+	if len(varPub.TopicName) == 0 {
+		return errEmptyTopic
+	}
+	id, err := orch.PacketIdentifier(PacketPublish, qos, len(payload))
+	if err != nil {
 		return err
 	}
-	qos := flags.QoS()
-	if qos != QoS0 {
-		return errors.New("only supports QoS0")
+	varPub.PacketIdentifier = id
+	h := newHeader(PacketPublish, flags.WithQoS(qos), uint32(varPub.Size(qos)+len(payload)))
+	if err := orch.OnPublishSent(h, varPub, payload); err != nil {
+		return err
 	}
+	return c.txWritePublish(h, varPub, payload)
+}
+
+// txWritePublish writes a PUBLISH packet to the transport under txlock.
+func (c *Client) txWritePublish(h Header, varPub VariablesPublish, payload []byte) error {
 	c.txlock.Lock()
 	defer c.txlock.Unlock()
 	if !c.IsConnected() {
 		return errDisconnected
 	}
-	return c.tx.WritePublishPayload(newHeader(PacketPublish, flags, uint32(varPub.Size(qos)+len(payload))), varPub, payload)
+	return c.tx.WritePublishPayload(h, varPub, payload)
 }
 
 // Err returns error indicating the cause of client disconnection.

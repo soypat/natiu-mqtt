@@ -21,6 +21,9 @@ type clientState struct {
 	closeErr    error
 	pendingSubs VariablesSubscribe
 	_nanotime   func() int64
+	// orchestrator handles QoS1/QoS2 state. Nil for a pure QoS0 client, in which
+	// case all QoS>0 routing and retransmission pumping is inert.
+	orchestrator QoSOrchestrator
 }
 
 func (cs *clientState) nanotime() int64 {
@@ -83,7 +86,24 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 				cs.onConnect(connTime)
 				return nil
 			},
-			OnPub: onPub,
+			OnPub: func(rx *Rx, vp VariablesPublish, r io.Reader) error {
+				// Inbound QoS>0 PUBLISH must be reported to the orchestrator so it
+				// can advance the inbound state machine (enqueue PUBACK/PUBREC).
+				if rx.LastReceivedHeader.Flags().QoS() != QoS0 {
+					cs.mu.Lock()
+					orch := cs.orchestrator
+					cs.mu.Unlock()
+					if orch != nil {
+						if err := orch.OnControlPacket(rx.LastReceivedHeader, vp.PacketIdentifier); err != nil {
+							return err
+						}
+					}
+				}
+				if onPub != nil {
+					return onPub(rx, vp, r)
+				}
+				return nil
+			},
 			OnSuback: func(r *Rx, vs VariablesSuback) error {
 				rxTime := cs.nanotime()
 				cs.mu.Lock()
@@ -107,8 +127,8 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 				tp := rx.LastReceivedHeader.Type()
 				rxTime := cs.nanotime()
 				cs.mu.Lock()
-				defer cs.mu.Unlock()
 				cs.lastRx = rxTime
+				var orch QoSOrchestrator
 				switch tp {
 				case PacketDisconnect:
 					err = errDisconnected
@@ -116,11 +136,19 @@ func (cs *clientState) callbacks(onPub func(rx *Rx, varPub VariablesPublish, r i
 					cs.pendingPingreq = rxTime
 				case PacketPingresp:
 					cs.pendingPingresp = 0 // got the response, we can unflag.
+				case PacketPuback, PacketPubrec, PacketPubrel, PacketPubcomp:
+					// QoS1/QoS2 control packets are routed to the orchestrator.
+					orch = cs.orchestrator
 				default:
 					println("unexpected packet type: ", tp.String())
 				}
 				if err != nil {
 					cs.onDisconnect(err)
+				}
+				cs.mu.Unlock()
+				// Call orchestrator outside cs.mu to avoid re-entrant deadlock.
+				if orch != nil {
+					err = orch.OnControlPacket(rx.LastReceivedHeader, packetIdentifier)
 				}
 				return err
 			},

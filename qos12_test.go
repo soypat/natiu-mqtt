@@ -1,8 +1,9 @@
 package mqtt
 
 import (
-	"errors"
+	"context"
 	"io"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -86,81 +87,34 @@ func (g schedGoro) FinishWithErr(err error) {
 
 func (g schedGoro) Finish() { g.FinishWithErr(nil) }
 
-// ----- QoS orchestrator heap (test only) -----
+// ----- behavioural tests using OrchestratorNoAlloc -----
 
-type QoSOrchestratorHeap struct {
-	inflight map[uint16]flight
-	nextID   uint16
+func newTestOrchestrator(t testing.TB) *OrchestratorNoAlloc {
+	t.Helper()
+	var o OrchestratorNoAlloc
+	err := o.Configure(OrchestratorNoAllocConfig{
+		MaxOutbound: 4, MaxInboundQoS2: 4, MaxPendingResp: 4,
+		MaxTopicLen: 32, MaxPayloadLen: 64, RetryInterval: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &o
 }
 
-type flight struct {
-	h       Header
-	v       VariablesPublish
-	payload []byte
-	sentAt  int64 // simulated nanoseconds
-	qos     QoSLevel
-}
-
-func (o *QoSOrchestratorHeap) PacketIdentifier(pt PacketType, qos QoSLevel, payloadSize int) (uint16, error) {
-	if o.inflight == nil {
-		o.inflight = make(map[uint16]flight)
-	}
-	if o.nextID == 0 {
-		o.nextID = 1
-	}
-	for i := 0; i < 65536; i++ {
-		id := o.nextID
-		o.nextID++
-		if o.nextID == 0 {
-			o.nextID = 1
-		}
-		if _, ok := o.inflight[id]; !ok {
-			return id, nil
+// outInflight counts non-free outbound slots in the orchestrator.
+func outInflight(o *OrchestratorNoAlloc) int {
+	n := 0
+	for i := range o.out {
+		if o.out[i].state != stateFree {
+			n++
 		}
 	}
-	return 0, ErrPacketIDExhausted
+	return n
 }
 
-func (o *QoSOrchestratorHeap) OnPublishSent(h Header, v VariablesPublish, payload []byte) error {
-	if o.inflight == nil {
-		o.inflight = make(map[uint16]flight)
-	}
-	qos := h.Flags().QoS()
-	o.inflight[v.PacketIdentifier] = flight{
-		h:       h,
-		v:       v,
-		payload: append([]byte(nil), payload...),
-		sentAt:  0, // will be set by test driver via simulated time
-		qos:     qos,
-	}
-	return nil
-}
-
-func (o *QoSOrchestratorHeap) OnControlPacket(h Header, packetID uint16) error {
-	tp := h.Type()
-	switch tp {
-	case PacketPuback, PacketPubcomp:
-		delete(o.inflight, packetID)
-	case PacketPubrec, PacketPubrel:
-		// QoS2 handling (no-op for QoS1 tests)
-	}
-	return nil
-}
-
-func (o *QoSOrchestratorHeap) NextRetransmit() (RetransmitAction, bool) {
-	// Not exercised in the basic QoS1 test below.
-	return RetransmitAction{}, false
-}
-
-func (o *QoSOrchestratorHeap) Reset() {
-	o.inflight = nil
-	o.nextID = 0
-}
-
-// ----- behavioural tests using the scheduler -----
-
-func TestQoSOrchestratorHeap_PacketIdentifier(t *testing.T) {
-	o := &QoSOrchestratorHeap{}
+func TestOrchestratorNoAlloc_PacketIdentifier(t *testing.T) {
+	o := newTestOrchestrator(t)
 	id1, err := o.PacketIdentifier(PacketPublish, QoS1, 10)
 	if err != nil || id1 == 0 {
 		t.Fatalf("expected valid id, got %d %v", id1, err)
@@ -171,58 +125,81 @@ func TestQoSOrchestratorHeap_PacketIdentifier(t *testing.T) {
 	}
 }
 
-// TestClientQoS12_PublishQoS1 exercises the QoS1 orchestrator contract
-// in-memory without network or real time. It verifies that a PID is
-// obtained before any packet leaves and that a PUBACK cleans the state.
-func TestClientQoS12_PublishQoS1(t *testing.T) {
-	base := NewClient(ClientConfig{})
-	o := &QoSOrchestratorHeap{}
-	_ = NewClientQoS12(base, ClientQoS12Config{Orchestrator: o})
+// TestClientPublishQoS1Pipe drives a real QoS1 PUBLISH over an in-memory pipe and
+// verifies the orchestrator tracks the in-flight message and frees it once the
+// broker's PUBACK is processed by the Client's HandleNext loop.
+func TestClientPublishQoS1Pipe(t *testing.T) {
+	const testTimeout = 3 * time.Second
+	clientEnd, brokerEnd := net.Pipe()
+	defer clientEnd.Close()
+	defer brokerEnd.Close()
 
-	// We bypass StartConnect / pipe handshaking for this focused behavioural test.
-	// The goal is to verify that PublishPayload (QoS>0) obtains a PID from the
-	// orchestrator and that OnControlPacket cleans up the in-flight entry.
-	base.cs.onConnect(0) // mark as connected without touching the network
+	o := newTestOrchestrator(t)
+	c := NewClient(ClientConfig{Orchestrator: o})
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	go runPubackBroker(ctx, brokerEnd)
 
-	// Because we did not wire a transport, PublishPayload will fail with
-	// errDisconnected. That is expected and fine for this behavioural test:
-	// the important contract we exercise is that the orchestrator is asked for
-	// a PID before any packet is sent, and that OnControlPacket later cleans up.
-	// We therefore call the low-level steps manually via the public API.
-
-	// 1. Ask the orchestrator for a PID (what PublishPayload would do).
-	id, err := o.PacketIdentifier(PacketPublish, QoS1, 5)
-	if err != nil {
-		t.Fatalf("orchestrator refused PID: %v", err)
-	}
-	if id == 0 {
-		t.Fatal("expected non-zero PID")
+	var varconn VariablesConnect
+	varconn.SetDefaultMQTT([]byte("natiu-qos1"))
+	if err := c.Connect(ctx, clientEnd, &varconn); err != nil {
+		t.Fatal(err)
 	}
 
-	// 2. Simulate that the client sent the packet (would normally call OnPublishSent).
-	//    We call it directly to keep the test focused on the orchestrator contract.
-	h := Header{} // simplified; real code would build a proper header
-	h.firstByte = byte(PacketPublish)<<4 | byte(QoS1<<1)
-	vp := VariablesPublish{TopicName: []byte("t"), PacketIdentifier: id}
-	if err := o.OnPublishSent(h, vp, []byte("hi")); err != nil {
-		t.Fatalf("OnPublishSent: %v", err)
+	flags, _ := NewPublishFlags(QoS1, false, false)
+	if err := c.PublishPayload(flags, VariablesPublish{TopicName: []byte("abc")}, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if got := outInflight(o); got != 1 {
+		t.Fatalf("expected 1 in-flight after QoS1 publish, got %d", got)
 	}
 
-	// 3. Simulate the broker answering with PUBACK (what HandleNext + RxCallbacks would do).
-	pubackH := Header{}
-	pubackH.firstByte = byte(PacketPuback) << 4
-	if err := o.OnControlPacket(pubackH, id); err != nil {
-		t.Fatalf("OnControlPacket: %v", err)
+	// Pump until the PUBACK frees the in-flight entry. A read deadline guarantees
+	// HandleNext cannot block forever if the PUBACK never arrives.
+	deadline := time.Now().Add(testTimeout)
+	if err := clientEnd.SetReadDeadline(deadline); err != nil {
+		t.Fatal(err)
 	}
-
-	// 4. The in-flight table must now be empty.
-	if len(o.inflight) != 0 {
-		t.Fatalf("expected empty in-flight after PUBACK, got %d", len(o.inflight))
+	for outInflight(o) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for PUBACK")
+		}
+		if err := c.HandleNext(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
-// decodeMQTTString / decodeUint16 are unexported; provide tiny local wrappers
-// only for the test server if needed in future tests. They are omitted here
-// because the scheduler-driven test above does not require a full broker loop.
-var _ = io.EOF
-var _ = errors.New
+// runPubackBroker accepts one connection, CONNACKs, and replies to every QoS1
+// PUBLISH with a PUBACK. The PUBACK is sent from the loop after ReadNextPacket
+// has fully consumed the PUBLISH (including its payload); replying from inside
+// OnPub would deadlock the synchronous pipe (both ends blocked writing). Exits
+// when the pipe closes or ctx ends.
+func runPubackBroker(ctx context.Context, conn net.Conn) {
+	defer conn.Close()
+	rxtx, _ := NewRxTx(conn, DecoderNoAlloc{UserBuffer: make([]byte, 1024)})
+	var pendingPuback uint16
+	rxtx.RxCallbacks = RxCallbacks{
+		OnConnect: func(r *Rx, vc *VariablesConnect) error {
+			return rxtx.WriteConnack(VariablesConnack{ReturnCode: 0})
+		},
+		OnPub: func(rx *Rx, vp VariablesPublish, r io.Reader) error {
+			if rx.LastReceivedHeader.Flags().QoS() == QoS1 {
+				pendingPuback = vp.PacketIdentifier
+			}
+			return nil
+		},
+	}
+	for ctx.Err() == nil {
+		if _, err := rxtx.ReadNextPacket(); err != nil {
+			return
+		}
+		if pendingPuback != 0 {
+			id := pendingPuback
+			pendingPuback = 0
+			if err := rxtx.WriteIdentified(PacketPuback, id); err != nil {
+				return
+			}
+		}
+	}
+}
