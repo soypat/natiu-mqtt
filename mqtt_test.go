@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const TCPServer = "test.mosquitto.org:1883"
-
 func TestMQTTConnect(t *testing.T) {
 	const (
 		clientID    = "natiu-test"
@@ -21,27 +19,32 @@ func TestMQTTConnect(t *testing.T) {
 		payload     = "hello world!"
 		testTimeout = 3 * time.Second
 	)
-	tcpaddr, err := net.ResolveTCPAddr("tcp", TCPServer)
-	if err != nil {
-		t.Fatal(err)
+	// In-memory bidirectional pipe replaces the real TCP connection to test.mosquitto.org.
+	clientEnd, brokerEnd := net.Pipe()
+	defer clientEnd.Close()
+	defer brokerEnd.Close()
+
+	var now int64
+	nanotime := func() int64 {
+		return now
 	}
-	conn, err := net.DialTCP("tcp", nil, tcpaddr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := NewClient(ClientConfig{OnPub: func(pubHead Header, varPub VariablesPublish, r io.Reader) error {
-		t.Log(pubHead, varPub)
-		return nil
-	}})
+	c := NewClient(ClientConfig{
+		OnPub: func(pubHead Header, varPub VariablesPublish, r io.Reader) error {
+			t.Log(pubHead, varPub)
+			return nil
+		},
+		Nanotime: nanotime,
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
+	go runMinimalBroker(t, ctx, brokerEnd)
 	var varconn VariablesConnect
 	varconn.SetDefaultMQTT([]byte(clientID))
-	err = c.Connect(ctx, conn, &varconn)
+	err := c.Connect(ctx, clientEnd, &varconn)
 	if err != nil {
 		t.Error(err)
 	}
-	pid := (uint16(time.Now().UnixMilli()) % 512) + 2 // Ensure packet ID greater than 1 that cant overflow.
+	pid := (uint16(time.Now().UnixMilli()) % 512) + 2
 	err = c.Subscribe(ctx, VariablesSubscribe{
 		PacketIdentifier: pid,
 		TopicFilters: []SubscribeRequest{{
@@ -60,6 +63,47 @@ func TestMQTTConnect(t *testing.T) {
 	err = c.PublishPayload(flags, varPub, []byte(payload))
 	if err != nil {
 		t.Error(err)
+	}
+}
+
+// runMinimalBroker implements a minimal MQTT broker sufficient for TestMQTTConnect.
+// It accepts one connection, responds to CONNECT with CONNACK, to SUBSCRIBE with SUBACK,
+// and silently accepts QoS0 PUBLISH. The goroutine exits when the client closes the pipe.
+func runMinimalBroker(t *testing.T, ctx context.Context, conn net.Conn) {
+	defer conn.Close()
+	for ctx.Err() == nil {
+		hdr, n, err := DecodeHeader(conn)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		switch hdr.Type() {
+		case PacketConnect:
+			// Drain variable header + payload (we ignore its content for the test).
+			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength))
+			// Reply with CONNACK (accepted).
+			conn.Write([]byte{0x20, 0x02, 0x00, 0x00})
+		case PacketSubscribe:
+			// Variable header: 2-byte PI + topic filter + QoS byte(s).
+			// We only need the PI for SUBACK.
+			var pi [2]byte
+			if _, err := io.ReadFull(conn, pi[:]); err != nil {
+				t.Error(err)
+				return
+			}
+			// Skip the rest of the subscribe payload.
+			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength)-2)
+			// Reply with SUBACK (return code 0).
+			conn.Write([]byte{0x90, 0x03, pi[0], pi[1], 0x00})
+		case PacketPublish:
+			// QoS0 PUBLISH – just discard the payload.
+			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength))
+			// QoS0 needs no response.
+		default:
+			// Ignore PINGREQ, DISCONNECT etc. for this minimal broker.
+			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength))
+		}
+		_ = n
 	}
 }
 

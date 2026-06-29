@@ -24,7 +24,6 @@ type Client struct {
 	txlock sync.Mutex
 	tx     Tx
 
-	// _nanotime is the time source. When nil, time.Now().UnixNano() is used.
 	_nanotime func() int64
 }
 
@@ -55,7 +54,9 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.Decoder == nil {
 		cfg.Decoder = DecoderNoAlloc{UserBuffer: make([]byte, 4*1024)}
 	}
-	c := &Client{cs: clientState{closeErr: errors.New("yet to connect")}, _nanotime: cfg.Nanotime}
+	c := &Client{
+		cs: clientState{closeErr: errors.New("yet to connect"), _nanotime: cfg.Nanotime},
+	}
 	c.rx.RxCallbacks, c.tx.TxCallbacks = c.cs.callbacks(onPub)
 	c.rx.userDecoder = cfg.Decoder
 	return c
@@ -293,10 +294,7 @@ func (c *Client) LastTx() time.Time { return c.cs.LastTx() }
 
 // nanotime returns the current time in nanoseconds using the configured time source.
 func (c *Client) nanotime() int64 {
-	if c._nanotime != nil {
-		return c._nanotime()
-	}
-	return time.Now().UnixNano()
+	return c.cs.nanotime()
 }
 
 func newBackoff() exponentialBackoff {
