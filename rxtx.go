@@ -66,6 +66,10 @@ func (rx *Rx) SetRxTransport(transport io.ReadCloser) {
 	rx.rxTrp = transport
 }
 
+func (rx *Rx) SetDecoder(alloc Decoder) {
+	rx.userDecoder = alloc
+}
+
 // Close closes the underlying transport.
 func (rx *Rx) CloseRx() error { return rx.rxTrp.Close() }
 func (rx *Rx) rxErrHandler(err error) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -15,6 +16,7 @@ import (
 func TestMQTTConnect(t *testing.T) {
 	const (
 		clientID    = "natiu-test"
+		username    = "natiu"
 		topic       = "abc"
 		payload     = "hello world!"
 		testTimeout = 3 * time.Second
@@ -40,6 +42,7 @@ func TestMQTTConnect(t *testing.T) {
 	go runMinimalBroker(t, ctx, brokerEnd)
 	var varconn VariablesConnect
 	varconn.SetDefaultMQTT([]byte(clientID))
+	varconn.Username = []byte(username)
 	err := c.Connect(ctx, clientEnd, &varconn)
 	if err != nil {
 		t.Error(err)
@@ -64,6 +67,7 @@ func TestMQTTConnect(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	time.Sleep(time.Millisecond)
 }
 
 // runMinimalBroker implements a minimal MQTT broker sufficient for TestMQTTConnect.
@@ -71,39 +75,37 @@ func TestMQTTConnect(t *testing.T) {
 // and silently accepts QoS0 PUBLISH. The goroutine exits when the client closes the pipe.
 func runMinimalBroker(t *testing.T, ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	rxtx, _ := NewRxTx(conn, DecoderNoAlloc{UserBuffer: make([]byte, 1024)})
+	rxtx.SetTxTransport(conn)
+	rxtx.SetRxTransport(conn)
+	logf := t.Logf
+	rxtx.RxCallbacks = RxCallbacks{
+		OnConnect: func(r *Rx, vc *VariablesConnect) error {
+			logf("broker: %s connect", vc.Username)
+			return rxtx.WriteConnack(VariablesConnack{AckFlags: 0, ReturnCode: 0})
+		},
+		OnSub: func(r *Rx, vs VariablesSubscribe) error {
+			logf("broker: sub to %s", vs.TopicFilters)
+			return rxtx.WriteSuback(VariablesSuback{
+				ReturnCodes:      make([]QoSLevel, len(vs.TopicFilters)),
+				PacketIdentifier: ^vs.PacketIdentifier,
+			})
+		},
+		OnPub: func(rx *Rx, varPub VariablesPublish, r io.Reader) error {
+			logf("broker: pub on %s", varPub.TopicName)
+			return nil
+		},
+	}
 	for ctx.Err() == nil {
-		hdr, n, err := DecodeHeader(conn)
+		n, err := rxtx.ReadNextPacket()
 		if err != nil {
-			t.Error(err)
-			return
-		}
-		switch hdr.Type() {
-		case PacketConnect:
-			// Drain variable header + payload (we ignore its content for the test).
-			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength))
-			// Reply with CONNACK (accepted).
-			conn.Write([]byte{0x20, 0x02, 0x00, 0x00})
-		case PacketSubscribe:
-			// Variable header: 2-byte PI + topic filter + QoS byte(s).
-			// We only need the PI for SUBACK.
-			var pi [2]byte
-			if _, err := io.ReadFull(conn, pi[:]); err != nil {
-				t.Error(err)
+			if ctx.Err() != nil {
 				return
 			}
-			// Skip the rest of the subscribe payload.
-			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength)-2)
-			// Reply with SUBACK (return code 0).
-			conn.Write([]byte{0x90, 0x03, pi[0], pi[1], 0x00})
-		case PacketPublish:
-			// QoS0 PUBLISH – just discard the payload.
-			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength))
-			// QoS0 needs no response.
-		default:
-			// Ignore PINGREQ, DISCONNECT etc. for this minimal broker.
-			io.CopyN(io.Discard, conn, int64(hdr.RemainingLength))
+			fmt.Println(err, n)
+			t.Error(err, n)
 		}
-		_ = n
+		runtime.Gosched()
 	}
 }
 
