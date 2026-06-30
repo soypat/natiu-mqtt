@@ -66,6 +66,10 @@ func (rx *Rx) SetRxTransport(transport io.ReadCloser) {
 	rx.rxTrp = transport
 }
 
+func (rx *Rx) SetDecoder(alloc Decoder) {
+	rx.userDecoder = alloc
+}
+
 // Close closes the underlying transport.
 func (rx *Rx) CloseRx() error { return rx.rxTrp.Close() }
 func (rx *Rx) rxErrHandler(err error) {
@@ -115,8 +119,9 @@ func (rx *Rx) ReadNextPacket() (int, error) {
 		}
 
 		if rx.packetLimitReader.N != 0 && err == nil {
-			err = errors.New("expected OnPub to completely read payload")
-			break
+			// OnPub callback did not consume the entire payload; drain the
+			// remainder so the transport stays aligned for the next packet.
+			err = rx.exhaustReader(&rx.packetLimitReader)
 		}
 
 	case PacketConnack:

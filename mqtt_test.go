@@ -8,40 +8,47 @@ import (
 	"io"
 	"math"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
 
-const TCPServer = "test.mosquitto.org:1883"
-
 func TestMQTTConnect(t *testing.T) {
 	const (
 		clientID    = "natiu-test"
+		username    = "natiu"
 		topic       = "abc"
 		payload     = "hello world!"
 		testTimeout = 3 * time.Second
 	)
-	tcpaddr, err := net.ResolveTCPAddr("tcp", TCPServer)
-	if err != nil {
-		t.Fatal(err)
+	// In-memory bidirectional pipe replaces the real TCP connection to test.mosquitto.org.
+	clientEnd, brokerEnd := net.Pipe()
+	defer clientEnd.Close()
+	defer brokerEnd.Close()
+
+	var now int64
+	nanotime := func() int64 {
+		now++
+		return now
 	}
-	conn, err := net.DialTCP("tcp", nil, tcpaddr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := NewClient(ClientConfig{OnPub: func(pubHead Header, varPub VariablesPublish, r io.Reader) error {
-		t.Log(pubHead, varPub)
-		return nil
-	}})
+	c := NewClient(ClientConfig{
+		OnPub: func(pubHead Header, varPub VariablesPublish, r io.Reader) error {
+			t.Log(pubHead, varPub)
+			return nil
+		},
+		Nanotime: nanotime,
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
+	go runMinimalBroker(t, ctx, brokerEnd)
 	var varconn VariablesConnect
 	varconn.SetDefaultMQTT([]byte(clientID))
-	err = c.Connect(ctx, conn, &varconn)
+	varconn.Username = []byte(username)
+	err := c.Connect(ctx, clientEnd, &varconn)
 	if err != nil {
 		t.Error(err)
 	}
-	pid := (uint16(time.Now().UnixMilli()) % 512) + 2 // Ensure packet ID greater than 1 that cant overflow.
+	pid := (uint16(time.Now().UnixMilli()) % 512) + 2
 	err = c.Subscribe(ctx, VariablesSubscribe{
 		PacketIdentifier: pid,
 		TopicFilters: []SubscribeRequest{{
@@ -60,6 +67,45 @@ func TestMQTTConnect(t *testing.T) {
 	err = c.PublishPayload(flags, varPub, []byte(payload))
 	if err != nil {
 		t.Error(err)
+	}
+	time.Sleep(time.Millisecond)
+}
+
+// runMinimalBroker implements a minimal MQTT broker sufficient for TestMQTTConnect.
+// It accepts one connection, responds to CONNECT with CONNACK, to SUBSCRIBE with SUBACK,
+// and silently accepts QoS0 PUBLISH. The goroutine exits when the client closes the pipe.
+func runMinimalBroker(t *testing.T, ctx context.Context, conn net.Conn) {
+	defer conn.Close()
+	rxtx, _ := NewRxTx(conn, DecoderNoAlloc{UserBuffer: make([]byte, 1024)})
+	logf := func(string, ...any) {} // t.Logf
+	rxtx.RxCallbacks = RxCallbacks{
+		OnConnect: func(r *Rx, vc *VariablesConnect) error {
+			logf("broker: %s connect", vc.Username)
+			return rxtx.WriteConnack(VariablesConnack{AckFlags: 0, ReturnCode: 0})
+		},
+		OnSub: func(r *Rx, vs VariablesSubscribe) error {
+			logf("broker: sub to %s", vs.TopicFilters)
+			return rxtx.WriteSuback(VariablesSuback{
+				ReturnCodes:      make([]QoSLevel, len(vs.TopicFilters)),
+				PacketIdentifier: vs.PacketIdentifier,
+			})
+		},
+		OnPub: func(rx *Rx, varPub VariablesPublish, r io.Reader) error {
+			io.Copy(io.Discard, r)
+			logf("broker: pub on %s", varPub.TopicName)
+			return nil
+		},
+	}
+	for ctx.Err() == nil {
+		n, err := rxtx.ReadNextPacket()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			fmt.Println(err, n)
+			t.Error(err, n)
+		}
+		runtime.Gosched()
 	}
 }
 
